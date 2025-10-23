@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY agent/ ./agent/
 COPY tools/ ./tools/
 COPY instructions/ ./instructions/
+COPY tests/ ./tests/
 COPY config.yaml .
 COPY main.py .
 

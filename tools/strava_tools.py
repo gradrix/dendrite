@@ -30,7 +30,13 @@ class StravaClient:
         self.rate_limit_reset = None
         
     def _load_cookies(self):
-        """Load cookies from file."""
+        """
+        Load cookies from file.
+        
+        Supports two formats:
+        1. JSON array: [{"name": "...", "value": "...", "domain": "..."}]
+        2. Raw cookie string: "key1=value1; key2=value2; ..."
+        """
         cookies_path = Path(self.cookies_file)
         if not cookies_path.exists():
             logger.warning(f"Cookies file not found: {self.cookies_file}")
@@ -39,14 +45,46 @@ class StravaClient:
         
         try:
             with open(cookies_path) as f:
-                cookies_data = json.load(f)
-                for cookie in cookies_data:
-                    self.session.cookies.set(
-                        cookie["name"],
-                        cookie["value"],
-                        domain=cookie.get("domain", ".strava.com")
-                    )
-            logger.info("Loaded Strava cookies successfully")
+                content = f.read().strip()
+                
+                # Try to parse as JSON first
+                try:
+                    cookies_data = json.loads(content)
+                    # JSON format: [{"name": "...", "value": "..."}]
+                    for cookie in cookies_data:
+                        self.session.cookies.set(
+                            cookie["name"],
+                            cookie["value"],
+                            domain=cookie.get("domain", ".strava.com")
+                        )
+                    logger.info(f"Loaded {len(cookies_data)} cookies from JSON format")
+                    
+                except (json.JSONDecodeError, TypeError):
+                    # Raw cookie string format: "key1=value1; key2=value2"
+                    logger.info("Parsing as raw cookie string format")
+                    
+                    # Split by semicolon and parse key=value pairs
+                    cookie_pairs = [pair.strip() for pair in content.split(';')]
+                    cookie_count = 0
+                    
+                    for pair in cookie_pairs:
+                        if '=' in pair:
+                            key, value = pair.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+                            
+                            if key:  # Only add non-empty keys
+                                self.session.cookies.set(
+                                    key,
+                                    value,
+                                    domain=".strava.com"
+                                )
+                                cookie_count += 1
+                    
+                    logger.info(f"Loaded {cookie_count} cookies from raw string format")
+                    
+            logger.info("Strava cookies loaded successfully")
+            
         except Exception as e:
             logger.error(f"Failed to load cookies: {e}")
     

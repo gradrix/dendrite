@@ -1,0 +1,62 @@
+# Example Strava Cookie Formats
+# Copy this file to .strava_cookies and update with your real cookie
+# The tool supports both formats below - choose whichever is easier!
+
+# ============================================================
+# Format 1: Raw Cookie String (EASIEST - Just Copy/Paste!)
+# ============================================================
+# Simply copy the entire Cookie header from your browser DevTools
+# and paste it here. That's it!
+#
+# Steps:
+#   1. Open Chrome, log into strava.com
+#   2. F12 → Network tab
+#   3. Click any strava.com request
+#   4. Copy the entire "Cookie" header value
+#   5. Paste below (remove the # comment)
+#
+# Example:
+# _strava4_session=your_session_value_here; CloudFront-Policy=xxx; CloudFront-Signature=yyy
+
+# ============================================================
+# Format 2: JSON Array (Structured)
+# ============================================================
+# Use this if you prefer structured data or only have the session value
+#
+# [
+#   {
+#     "name": "_strava4_session",
+#     "value": "your_session_value_here",
+#     "domain": ".strava.com"
+#   }
+# ]
+
+# ============================================================
+# How to Get Your Cookie:
+# ============================================================
+# Chrome DevTools Method:
+#   1. Visit strava.com and log in
+#   2. Press F12 (open DevTools)
+#   3. Go to Network tab
+#   4. Refresh the page or click around
+#   5. Click any request to strava.com
+#   6. Find "Request Headers" section
+#   7. Look for "Cookie:" header
+#   8. Copy the entire value (everything after "Cookie: ")
+#   9. Paste here using Format 1
+#
+# Alternative - Application Tab Method:
+#   1. F12 → Application tab
+#   2. Left sidebar: Storage → Cookies → https://www.strava.com
+#   3. Find "_strava4_session" cookie
+#   4. Copy the "Value" field
+#   5. Use Format 2 with just this value
+
+# ============================================================
+# Security Notes:
+# ============================================================
+# - This file is in .gitignore - it won't be committed
+# - Your cookie grants full access to your Strava account
+# - Cookies typically expire after hours/days
+# - Get a fresh cookie if you see 401 Unauthorized errors
+# - Never share this file or commit it to version control
