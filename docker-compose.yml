@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # Ollama service - the main LLM server
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    container_name: ${OLLAMA_CONTAINER_NAME:-ollama}
+    ports:
+      - "${OLLAMA_HOST:-0.0.0.0}:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - ollama-network
+    restart: unless-stopped
+    # Uncomment below for GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Setup service - runs the setup script
+  ollama-setup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ollama-setup
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.env:/app/.env:ro
+    networks:
+      - ollama-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_CONTAINER_NAME=${OLLAMA_CONTAINER_NAME:-ollama}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-llama3.1:8b}
+      - OLLAMA_PORT=${OLLAMA_PORT:-11434}
+    command: /app/setup-ollama.sh
+
+networks:
+  ollama-network:
+    driver: bridge
+    name: ${DOCKER_NETWORK:-ollama-network}
+
+volumes:
+  ollama-data:
+    name: ollama-data

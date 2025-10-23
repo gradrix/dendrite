@@ -1,0 +1,19 @@
+# Add .env to gitignore (keep .env.example)
+.env
+
+# Docker volumes
+ollama-data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
