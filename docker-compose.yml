@@ -52,6 +52,31 @@ networks:
     driver: bridge
     name: ${DOCKER_NETWORK:-ollama-network}
 
+  # AI Agent service
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ai-agent
+    volumes:
+      - ./state:/app/state
+      - ./logs:/app/logs
+      - ./instructions:/app/instructions
+      - ./.strava_cookies:/app/.strava_cookies:ro
+      - ./config.yaml:/app/config.yaml:ro
+    networks:
+      - ollama-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    # Command options:
+    # - Run once: command: python main.py --once
+    # - Run specific instruction: command: python main.py --instruction "Strava Activity Monitor"
+    # - Run scheduler (default): command: python main.py
+
 volumes:
   ollama-data:
     name: ollama-data

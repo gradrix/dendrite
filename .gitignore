@@ -1,6 +1,28 @@
 # Add .env to gitignore (keep .env.example)
 .env
 
+# AI Agent specific
+.strava_cookies
+state/*.db
+state/*.db-*
+logs/*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
 # Docker volumes
 ollama-data/
 

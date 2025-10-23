@@ -1,0 +1,41 @@
+# AI Agent Configuration
+
+# Ollama settings
+ollama:
+  base_url: "http://localhost:11434"
+  model: "llama3.1:8b"
+  timeout: 60
+  max_retries: 3
+  temperature: 0.7
+  
+# Agent settings
+agent:
+  name: "Strava Monitor Agent"
+  check_interval_minutes: 60  # How often to run (60 = hourly)
+  enabled: true
+  dry_run: false  # Set to true to simulate actions without executing
+  
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_to_file: true
+  log_dir: "logs"
+  max_log_size_mb: 100
+  backup_count: 5
+  
+# State management
+state:
+  database: "state/agent_state.db"
+  retention_days: 90  # How long to keep history
+  
+# Safety settings
+safety:
+  require_approval_for_writes: false  # Set true for human-in-the-loop
+  max_actions_per_run: 10
+  action_cooldown_seconds: 5  # Delay between actions
+  
+# Strava settings
+strava:
+  cookies_file: ".strava_cookies"  # Will be gitignored
+  rate_limit_per_minute: 100
+  timeout: 30
