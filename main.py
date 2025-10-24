@@ -5,6 +5,7 @@ Autonomous agent that periodically executes tasks based on instructions.
 """
 
 import logging
+import os
 import signal
 import sys
 import time
@@ -14,6 +15,10 @@ from typing import Optional
 
 import yaml
 from apscheduler.schedulers.blocking import BlockingScheduler
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from agent.ollama_client import OllamaClient
 from agent.tool_registry import get_registry

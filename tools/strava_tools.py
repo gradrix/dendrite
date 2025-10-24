@@ -283,6 +283,26 @@ class StravaClient:
                 timeout=30
             )
             
+            # Check status code before raising
+            if response.status_code != 200:
+                logger.error(f"❌ HTTP {response.status_code}: {method} {url}")
+                
+                # Try to extract error message from response
+                try:
+                    error_data = response.json()
+                    if isinstance(error_data, dict):
+                        error_msg = error_data.get('message') or error_data.get('error') or error_data.get('errors')
+                        if error_msg:
+                            logger.error(f"   Error message: {error_msg}")
+                except:
+                    # If not JSON, show text response
+                    if response.text:
+                        # Truncate long responses
+                        text_preview = response.text[:500]
+                        if len(response.text) > 500:
+                            text_preview += "..."
+                        logger.error(f"   Response: {text_preview}")
+            
             response.raise_for_status()
             
             # Try to parse as JSON
@@ -292,8 +312,7 @@ class StravaClient:
                 return response.text
                 
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error: {e}")
-            logger.error(f"Response: {e.response.text if e.response else 'N/A'}")
+            # Already logged detailed info above, just re-raise
             raise
         except Exception as e:
             logger.error(f"Request failed: {e}")
@@ -348,6 +367,19 @@ class StravaClient:
                 timeout=30
             )
             
+            # Log detailed error for non-200 responses
+            if response.status_code != 200:
+                logger.error(f"❌ API v3 Error {response.status_code}: GET {url}")
+                try:
+                    error_data = response.json()
+                    if isinstance(error_data, dict):
+                        msg = error_data.get('message') or error_data.get('errors')
+                        if msg:
+                            logger.error(f"   Error: {msg}")
+                except:
+                    if response.text:
+                        logger.error(f"   Response: {response.text[:500]}")
+            
             response.raise_for_status()
             activities = response.json()
             
@@ -360,12 +392,12 @@ class StravaClient:
             
         except requests.exceptions.HTTPError as e:
             if e.response and e.response.status_code == 401:
-                logger.warning("API token is invalid or expired")
-                logger.info("Attempting to refresh token...")
+                logger.warning("⚠️  API token is invalid or expired (401 Unauthorized)")
+                logger.info("🔄 Attempting to refresh token...")
                 
                 # Try to refresh the token
                 if self._refresh_token():
-                    logger.info("Token refreshed, retrying request...")
+                    logger.info("✅ Token refreshed, retrying request...")
                     # Retry with new token
                     headers = self._get_api_headers()
                     try:
@@ -376,6 +408,15 @@ class StravaClient:
                             params=params,
                             timeout=30
                         )
+                        
+                        if response.status_code != 200:
+                            logger.error(f"❌ Retry failed with status {response.status_code}")
+                            try:
+                                error_data = response.json()
+                                logger.error(f"   Error: {error_data}")
+                            except:
+                                logger.error(f"   Response: {response.text[:500]}")
+                        
                         response.raise_for_status()
                         activities = response.json()
                         
@@ -383,7 +424,7 @@ class StravaClient:
                             logger.info(f"Retrieved {len(activities)} activities from API v3 (after refresh)")
                             return activities
                     except Exception as retry_error:
-                        logger.error(f"Retry failed after token refresh: {retry_error}")
+                        logger.error(f"❌ Retry failed after token refresh: {retry_error}")
                         return []
                 else:
                     logger.error("Could not refresh token. Get a new one:")
@@ -475,12 +516,29 @@ class StravaClient:
                 data=data,  # This will be form-encoded by requests
                 timeout=30
             )
+            
+            # Log error details for non-200 responses
+            if response.status_code != 200:
+                logger.error(f"❌ Update failed with status {response.status_code}: {url}")
+                try:
+                    error_data = response.json()
+                    logger.error(f"   Error: {error_data}")
+                except:
+                    if response.text:
+                        logger.error(f"   Response: {response.text[:500]}")
+            
             response.raise_for_status()
             
-            logger.info(f"Updated activity {activity_id}: {list(k for k in data.keys() if k not in ['utf8', '_method'])}")
-            return {"success": True, "activity_id": activity_id, "updated_fields": list(k for k in data.keys() if k not in ['utf8', '_method'])}
+            updated_fields = list(k for k in data.keys() if k not in ['utf8', '_method'])
+            logger.info(f"✅ Updated activity {activity_id}: {updated_fields}")
+            return {"success": True, "activity_id": activity_id, "updated_fields": updated_fields}
+            
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response else 'unknown'
+            logger.error(f"❌ HTTP {status} error updating activity {activity_id}")
+            return {"success": False, "error": f"HTTP {status}", "activity_id": activity_id}
         except Exception as e:
-            logger.error(f"Failed to update activity {activity_id}: {e}")
+            logger.error(f"❌ Failed to update activity {activity_id}: {e}")
             return {"success": False, "error": str(e), "activity_id": activity_id}
     
     def get_activity_kudos(self, activity_id: int) -> List[Dict[str, Any]]:

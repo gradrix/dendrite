@@ -18,6 +18,10 @@ services:
       - ollama-network
     environment:
       - PYTHONUNBUFFERED=1
+      - STRAVA_CLIENT_ID=${STRAVA_CLIENT_ID}
+      - STRAVA_CLIENT_SECRET=${STRAVA_CLIENT_SECRET}
+    env_file:
+      - .env
     restart: unless-stopped
     # Command options:
     # - Run once: command: python main.py --once
