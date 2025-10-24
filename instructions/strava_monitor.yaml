@@ -33,16 +33,27 @@ context: |
      - This gives you list of your activities with: id, name, type, distance, visibility, etc.
   
   4. ANALYZE ACTIVITIES (Use results from step 3)
-     - For each activity, check:
-       * Is visibility "only_me" (private)?
-       * Is type "Walk"? 
-       * Is type "Ride" AND distance < 10000 meters (10km)?
-     - Mark activities that need visibility update (private non-walks and rides >= 10km)
+     - IMPORTANT: Write detailed analysis in your reasoning field (it will be logged)
+     - In your reasoning, include:
+       * "📊 ACTIVITY ANALYSIS - Found {N} activities in last 24 hours:"
+       * For EACH activity, write one line:
+         "  • Activity {id}: '{name}' - Type: {type}, Distance: {distance}m, Visibility: {visibility}"
+       * Then for EACH activity, state the decision with clear reasoning:
+         "    ✅ NEEDS UPDATE: Private non-walk activity (will make public + 3D map)"
+         "    ✅ NEEDS UPDATE: Private ride >= 10km (will make public + 3D map)"
+         "    ⏭️  KEEP PRIVATE: Walk (always stay private per rules)"
+         "    ⏭️  KEEP PRIVATE: Ride < 10km (too short to make public)"
+         "    ⏭️  ALREADY PUBLIC: No action needed"
+       * At the end, summarize: "📝 SUMMARY: {X} activities need updates, {Y} will stay private, {Z} already public"
+     - This detailed reasoning will appear in logs for full transparency
+     - Then proceed to step 5 to update the qualifying activities
   
   5. UPDATE QUALIFYING ACTIVITIES (if any found in step 4)
-     - For activities that should be public:
+     - For activities that NEED UPDATE (private non-walks and rides >= 10km):
        * Call: updateActivity(activity_id=<id>, visibility="everyone")
-       * This changes private activities to public
+       * Also call: updateActivity(activity_id=<id>, selected_polyline_style="fatmap_satellite_3d")
+         to make the map 3D
+     - In your reasoning, state: "Updating {count} activities to public with 3D maps: {list of IDs}"
      - IMPORTANT: Only update if needed, don't update already public activities
   
   6. GET KUDOS ON YOUR RECENT ACTIVITIES (Use activity IDs from step 3)
@@ -142,11 +153,11 @@ permissions:
   allow_kudos: false
   allow_comments: false
   allow_activity_updates: true  # Can update your own activities
+  allow_updateactivity: true     # Explicitly allow updateActivity tool
   max_actions_per_run: 10  # Safety limit
   
-# What requires human approval
-requires_approval:
-  - "updateActivity calls (changing visibility or other fields)"
+# What requires human approval (empty - updateActivity now runs automatically)
+requires_approval: []
 
 # Output format
 output:

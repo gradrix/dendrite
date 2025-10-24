@@ -6,6 +6,7 @@ Tools for interacting with Strava API using session cookies.
 
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -153,6 +154,83 @@ class StravaClient:
                     logger.warning("API token file is empty")
         
         except Exception as e:
+            logger.error(f"Failed to load token: {e}")
+    
+    def _refresh_token(self):
+        """
+        Refresh the API access token using the refresh token.
+        
+        Strava tokens expire after 6 hours. This method uses the refresh token
+        to get a new access token.
+        
+        Returns:
+            bool: True if refresh successful, False otherwise
+        """
+        refresh_token_path = Path(".strava_refresh_token")
+        
+        if not refresh_token_path.exists():
+            logger.warning("No refresh token found. Cannot auto-refresh.")
+            logger.info("Run get_token_manual.sh to get new tokens with refresh capability")
+            return False
+        
+        try:
+            # Read refresh token
+            with open(refresh_token_path) as f:
+                refresh_token = f.read().strip().strip('"\'')
+            
+            # Read client credentials from environment or config
+            client_id = os.environ.get('STRAVA_CLIENT_ID')
+            client_secret = os.environ.get('STRAVA_CLIENT_SECRET')
+            
+            if not client_id or not client_secret:
+                logger.warning("STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET not set in environment")
+                logger.info("Set these to enable auto token refresh")
+                return False
+            
+            logger.info("Refreshing access token...")
+            
+            # Make refresh request
+            response = requests.post(
+                "https://www.strava.com/oauth/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token
+                }
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
+                return False
+            
+            data = response.json()
+            new_access_token = data.get('access_token')
+            new_refresh_token = data.get('refresh_token')
+            
+            if not new_access_token:
+                logger.error("No access token in refresh response")
+                return False
+            
+            # Save new tokens
+            with open(self.token_file, 'w') as f:
+                f.write(new_access_token)
+            
+            if new_refresh_token:
+                with open(refresh_token_path, 'w') as f:
+                    f.write(new_refresh_token)
+            
+            # Update in-memory token
+            self.api_token = new_access_token
+            
+            masked = f"{new_access_token[:8]}...{new_access_token[-4:]}"
+            logger.info(f"✅ Token refreshed successfully: {masked}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to refresh token: {e}")
+            return False
             logger.error(f"Failed to load API token: {e}")
     
     def _get_headers(self, referer: str = "https://www.strava.com/dashboard") -> Dict[str, str]:
@@ -282,8 +360,35 @@ class StravaClient:
             
         except requests.exceptions.HTTPError as e:
             if e.response and e.response.status_code == 401:
-                logger.error("API token is invalid or expired")
-                logger.info("Get a new token from https://www.strava.com/settings/api")
+                logger.warning("API token is invalid or expired")
+                logger.info("Attempting to refresh token...")
+                
+                # Try to refresh the token
+                if self._refresh_token():
+                    logger.info("Token refreshed, retrying request...")
+                    # Retry with new token
+                    headers = self._get_api_headers()
+                    try:
+                        response = self.session.request(
+                            method="GET",
+                            url=url,
+                            headers=headers,
+                            params=params,
+                            timeout=30
+                        )
+                        response.raise_for_status()
+                        activities = response.json()
+                        
+                        if isinstance(activities, list):
+                            logger.info(f"Retrieved {len(activities)} activities from API v3 (after refresh)")
+                            return activities
+                    except Exception as retry_error:
+                        logger.error(f"Retry failed after token refresh: {retry_error}")
+                        return []
+                else:
+                    logger.error("Could not refresh token. Get a new one:")
+                    logger.error("Run: ./get_token_manual.sh auth <CLIENT_ID>")
+                    return []
             else:
                 logger.error(f"HTTP error: {e}")
             return []
@@ -300,7 +405,8 @@ class StravaClient:
         trainer: Optional[bool] = None,
         commute: Optional[bool] = None,
         hide_from_home: Optional[bool] = None,
-        map_visibility: Optional[str] = None
+        map_visibility: Optional[str] = None,
+        selected_polyline_style: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Update activity details.
@@ -314,6 +420,7 @@ class StravaClient:
             commute: Whether it's a commute
             hide_from_home: Hide from home feed
             map_visibility: 'everyone', 'followers_only', or 'only_me'
+            selected_polyline_style: Map style - 'standard', 'satellite', 'fatmap_satellite_3d', etc.
             
         Returns:
             Updated activity data or error
@@ -321,13 +428,17 @@ class StravaClient:
         url = f"https://www.strava.com/activities/{activity_id}"
         headers = self._get_headers(referer=url)
         
-        # Build update payload
-        data = {}
+        # Build form data payload (Strava uses form data, not JSON)
+        data = {
+            "utf8": "✓",
+            "_method": "patch"
+            # Note: authenticity_token is in CSRF header, not form data
+        }
         
         if name is not None:
-            data["name"] = name
+            data["activity[name]"] = name
         if description is not None:
-            data["description"] = description
+            data["activity[description]"] = description
         if visibility is not None:
             # Map visibility to internal values
             visibility_map = {
@@ -338,24 +449,36 @@ class StravaClient:
                 "only_me": "only_me",
                 "private": "only_me"
             }
-            data["visibility"] = visibility_map.get(visibility.lower(), visibility)
+            data["activity[visibility]"] = visibility_map.get(visibility.lower(), visibility)
         if trainer is not None:
-            data["trainer"] = trainer
+            data["activity[trainer]"] = "1" if trainer else "0"
         if commute is not None:
-            data["commute"] = commute
+            data["activity[commute]"] = "1" if commute else "0"
         if hide_from_home is not None:
-            data["hide_from_home"] = hide_from_home
+            data["activity[hide_from_home]"] = "1" if hide_from_home else "0"
         if map_visibility is not None:
-            # For 3D map, we might need different field
-            data["map_visibility"] = map_visibility
+            data["activity[map_visibility]"] = map_visibility
+        if selected_polyline_style is not None:
+            data["activity[selected_polyline_style]"] = selected_polyline_style
         
-        if not data:
+        # Check if we have any fields to update (beyond the required utf8 and _method)
+        if len(data) <= 2:
             return {"success": False, "error": "No fields to update"}
         
         try:
-            response = self._make_request("PUT", url, headers=headers, json_data=data)
-            logger.info(f"Updated activity {activity_id}")
-            return {"success": True, "activity_id": activity_id, "updated_fields": list(data.keys())}
+            # Use POST (with _method=patch in form data)
+            # Send as form data, not JSON
+            response = self.session.request(
+                method="POST",
+                url=url,
+                headers=headers,
+                data=data,  # This will be form-encoded by requests
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            logger.info(f"Updated activity {activity_id}: {list(k for k in data.keys() if k not in ['utf8', '_method'])}")
+            return {"success": True, "activity_id": activity_id, "updated_fields": list(k for k in data.keys() if k not in ['utf8', '_method'])}
         except Exception as e:
             logger.error(f"Failed to update activity {activity_id}: {e}")
             return {"success": False, "error": str(e), "activity_id": activity_id}
@@ -879,7 +1002,8 @@ def get_my_activities(
         {"name": "name", "type": "string", "required": False, "description": "New activity name"},
         {"name": "description", "type": "string", "required": False, "description": "New description"},
         {"name": "visibility", "type": "string", "required": False, "description": "Visibility: 'everyone', 'followers_only', or 'only_me'"},
-        {"name": "map_visibility", "type": "string", "required": False, "description": "Map visibility: 'everyone', 'followers_only', or 'only_me'"}
+        {"name": "map_visibility", "type": "string", "required": False, "description": "Map visibility: 'everyone', 'followers_only', or 'only_me'"},
+        {"name": "selected_polyline_style", "type": "string", "required": False, "description": "Map style: 'standard', 'satellite', 'fatmap_satellite_3d' (for 3D map)"}
     ],
     returns="Success status with updated fields",
     permissions="write"
@@ -889,7 +1013,8 @@ def update_activity(
     name: Optional[str] = None,
     description: Optional[str] = None,
     visibility: Optional[str] = None,
-    map_visibility: Optional[str] = None
+    map_visibility: Optional[str] = None,
+    selected_polyline_style: Optional[str] = None
 ) -> Dict[str, Any]:
     """Update an activity's details."""
     client = get_client()
@@ -900,7 +1025,8 @@ def update_activity(
             name=name,
             description=description,
             visibility=visibility,
-            map_visibility=map_visibility
+            map_visibility=map_visibility,
+            selected_polyline_style=selected_polyline_style
         )
         
         if result.get("success"):
