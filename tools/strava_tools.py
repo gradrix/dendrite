@@ -378,9 +378,15 @@ class StravaClient:
         try:
             response = self._make_request("GET", url, headers=headers)
             
-            # Response format: {'models': [...]}
+            # Response format can be: {'athletes': [...]}, {'models': [...]}, {'kudosers': [...]}, or direct list
             if isinstance(response, dict):
-                if 'models' in response:
+                logger.info(f"Kudos response keys: {list(response.keys())}")
+                
+                if 'athletes' in response:
+                    kudos_list = response['athletes']
+                    logger.info(f"Retrieved {len(kudos_list)} kudos for activity {activity_id}")
+                    return kudos_list
+                elif 'models' in response:
                     kudos_list = response['models']
                     logger.info(f"Retrieved {len(kudos_list)} kudos for activity {activity_id}")
                     return kudos_list
@@ -388,11 +394,19 @@ class StravaClient:
                     kudos_list = response['kudosers']
                     logger.info(f"Retrieved {len(kudos_list)} kudos for activity {activity_id}")
                     return kudos_list
+                elif 'entries' in response:
+                    kudos_list = response['entries']
+                    logger.info(f"Retrieved {len(kudos_list)} kudos for activity {activity_id}")
+                    return kudos_list
+                elif 'data' in response:
+                    kudos_list = response['data']
+                    logger.info(f"Retrieved {len(kudos_list)} kudos for activity {activity_id}")
+                    return kudos_list
             elif isinstance(response, list):
                 logger.info(f"Retrieved {len(response)} kudos for activity {activity_id}")
                 return response
                 
-            logger.warning(f"Unexpected kudos response format: {type(response)}")
+            logger.warning(f"Unexpected kudos response format: {type(response)}, keys: {list(response.keys()) if isinstance(response, dict) else 'N/A'}")
             return []
             
         except Exception as e:

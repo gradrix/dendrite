@@ -12,6 +12,7 @@ services:
       - ./logs:/app/logs
       - ./instructions:/app/instructions
       - ./.strava_cookies:/app/.strava_cookies:ro
+      - ./.strava_token:/app/.strava_token:ro
       - ./config.yaml:/app/config.yaml:ro
     networks:
       - ollama-network

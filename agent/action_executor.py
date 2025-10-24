@@ -141,6 +141,10 @@ class ActionExecutor:
                     # Actually execute
                     logger.info(f"Executing: {tool_name}")
                     output = tool.execute(**params)
+                    
+                    # Log meaningful result summary
+                    self._log_result_summary(tool_name, output)
+                    
                     result = {
                         "success": True,
                         "tool": tool_name,
@@ -174,3 +178,71 @@ class ActionExecutor:
         )
         
         return results
+    
+    def _log_result_summary(self, tool_name: str, output: Any) -> None:
+        """Log a human-readable summary of the tool result."""
+        try:
+            if isinstance(output, dict):
+                # Handle common tool result patterns
+                if tool_name == "getActivityKudos":
+                    kudos_count = output.get('kudos_count', 0)
+                    athletes = output.get('athletes', [])
+                    logger.info(f"  → Found {kudos_count} kudos givers")
+                    for athlete in athletes[:5]:
+                        logger.info(f"     • {athlete.get('name', 'Unknown')} (ID: {athlete.get('id')})")
+                    if len(athletes) > 5:
+                        logger.info(f"     ... and {len(athletes) - 5} more")
+                
+                elif tool_name == "getMyActivities":
+                    if isinstance(output, list):
+                        logger.info(f"  → Found {len(output)} activities")
+                        for activity in output[:3]:
+                            name = activity.get('name', 'Unknown')
+                            kudos = activity.get('kudos_count', 0)
+                            logger.info(f"     • {name} ({kudos} kudos)")
+                        if len(output) > 3:
+                            logger.info(f"     ... and {len(output) - 3} more")
+                    else:
+                        logger.info(f"  → Result: {str(output)[:100]}")
+                
+                elif tool_name == "getDashboardFeed":
+                    if isinstance(output, list):
+                        logger.info(f"  → Found {len(output)} feed entries")
+                        kudoed_count = sum(1 for e in output if e.get('you_gave_kudos'))
+                        logger.info(f"     You've kudoed {kudoed_count}/{len(output)} activities")
+                
+                elif tool_name == "loadState":
+                    value = output.get('value')
+                    if isinstance(value, list):
+                        logger.info(f"  → Loaded list with {len(value)} items")
+                    elif value is not None:
+                        logger.info(f"  → Loaded: {str(value)[:100]}")
+                    else:
+                        logger.info(f"  → No saved state found")
+                
+                elif tool_name == "saveState":
+                    logger.info(f"  → State saved successfully")
+                
+                elif tool_name == "getCurrentDateTime":
+                    dt = output.get('datetime', {})
+                    iso = dt.get('iso', 'unknown')
+                    logger.info(f"  → Current time: {iso}")
+                
+                elif tool_name == "updateActivity":
+                    logger.info(f"  → Activity updated successfully")
+                
+                else:
+                    # Generic dict output
+                    logger.info(f"  → Result keys: {list(output.keys())}")
+            
+            elif isinstance(output, list):
+                logger.info(f"  → Returned {len(output)} items")
+            
+            elif isinstance(output, (str, int, float, bool)):
+                logger.info(f"  → Result: {output}")
+            
+            else:
+                logger.info(f"  → Result type: {type(output).__name__}")
+        
+        except Exception as e:
+            logger.debug(f"Could not log result summary: {e}")

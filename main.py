@@ -153,48 +153,85 @@ class AIAgent:
                 for exec in recent:
                     context += f"  - {exec['instruction_name']} at {exec['timestamp']}: {exec['status']}\n"
             
-            # Query LLM for decision
-            logger.info("Querying LLM for decision...")
-            prompt = f"Current time: {datetime.now().isoformat()}\n\nWhat actions should be taken?"
+            # Multi-step execution loop
+            max_iterations = self.config.get('agent', {}).get('max_iterations', 10)
+            all_results = []
             
-            decision = self.ollama.function_call(
-                prompt=prompt,
-                tools=available_tools,
-                context=context
-            )
-            
-            logger.info(f"LLM Decision: {decision['reasoning']}")
-            logger.info(f"Confidence: {decision['confidence']}")
-            logger.info(f"Actions to execute: {len(decision['actions'])}")
-            
-            # Save decision
-            decision_id = self.state_manager.save_decision(
-                execution_id=execution_id,
-                reasoning=decision['reasoning'],
-                confidence=decision['confidence'],
-                actions_count=len(decision['actions'])
-            )
-            
-            # Execute actions
-            if decision['actions']:
+            for iteration in range(max_iterations):
+                logger.info(f"\n{'='*60}")
+                logger.info(f"Iteration {iteration + 1}/{max_iterations}")
+                logger.info(f"{'='*60}")
+                
+                # Build prompt with previous results
+                prompt = f"Current time: {datetime.now().isoformat()}\n\n"
+                
+                if all_results:
+                    prompt += "Previous actions and their results:\n"
+                    for prev_result in all_results[-5:]:  # Last 5 results
+                        tool_name = prev_result.get('tool_name', 'unknown')
+                        success = prev_result.get('success', False)
+                        result_data = prev_result.get('result', {})
+                        prompt += f"  - {tool_name}: {'✅ Success' if success else '❌ Failed'}\n"
+                        if result_data:
+                            prompt += f"    Result: {str(result_data)[:200]}\n"
+                    prompt += "\n"
+                
+                prompt += "What actions should be taken next? (Return empty actions array if workflow is complete)"
+                
+                # Query LLM for decision
+                logger.info("Querying LLM for decision...")
+                decision = self.ollama.function_call(
+                    prompt=prompt,
+                    tools=available_tools,
+                    context=context
+                )
+                
+                logger.info(f"LLM Decision: {decision['reasoning']}")
+                logger.info(f"Confidence: {decision['confidence']}")
+                logger.info(f"Actions to execute: {len(decision['actions'])}")
+                
+                # Save decision
+                decision_id = self.state_manager.save_decision(
+                    execution_id=execution_id,
+                    reasoning=decision['reasoning'],
+                    confidence=decision['confidence'],
+                    actions_count=len(decision['actions'])
+                )
+                
+                # Check if no more actions (workflow complete)
+                if not decision['actions']:
+                    logger.info("✅ Workflow complete - LLM returned no more actions")
+                    break
+                
+                # Execute actions
                 results = self.executor.execute_actions(
                     actions=decision['actions'],
                     instruction=instruction
                 )
                 
-                # Save action results
+                # Save action results and build result summary
                 for action, result in zip(decision['actions'], results):
+                    result_record = {
+                        'tool_name': action['tool'],
+                        'parameters': action.get('params'),
+                        'result': result.get('result'),
+                        'success': result.get('success', False),
+                        'error': result.get('error')
+                    }
+                    all_results.append(result_record)
+                    
                     self.state_manager.save_action(
                         execution_id=execution_id,
                         decision_id=decision_id,
-                        tool_name=action['tool'],
-                        parameters=action['params'],
-                        result=result.get('result'),
-                        success=result.get('success', False),
-                        error=result.get('error')
+                        **result_record
                     )
-            else:
-                logger.info("No actions to execute")
+                
+                # Log iteration summary
+                successful = sum(1 for r in results if r.get('success'))
+                logger.info(f"Iteration complete: {successful}/{len(results)} actions successful")
+            
+            if iteration == max_iterations - 1:
+                logger.warning(f"⚠️  Reached max iterations ({max_iterations}) - workflow may be incomplete")
             
             # Mark as complete
             duration = time.time() - start_time
