@@ -18,15 +18,99 @@ logger = logging.getLogger(__name__)
 # SPECIAL: LLM Reasoning Step (not a callable tool, but a step type)
 # This is documented here so it appears in tool listings for ask.sh
 @tool(
-    description="Use LLM to analyze, filter, format, or transform data. NOT a regular tool - use 'input' and 'output_format' fields instead of 'tool' and 'params'. Example: analyze activities to find which need updates, format data for display, extract specific fields, summarize results.",
+    description="Use LLM to analyze, filter, format, or transform data. Example: extract specific fields, format data for display, summarize results.",
     parameters=[
-        {"name": "input", "type": "any", "description": "Data to analyze (use template variables like {{step_id.result}})", "required": True},
-        {"name": "context", "type": "string", "description": "Instructions for what to analyze/extract/format", "required": True},
-        {"name": "output_format", "type": "object", "description": "JSON structure defining expected output format", "required": True}
+        {"name": "data", "type": "any", "description": "Data to analyze (JSON, dict, list, etc.)", "required": True},
+        {"name": "task", "type": "string", "description": "What to do with the data (e.g., 'extract activity IDs', 'format as readable list', 'find activities without descriptions')", "required": True},
+        {"name": "format", "type": "string", "description": "Desired output format: 'json', 'list', 'text', 'table'", "required": False}
     ],
-    returns="Analyzed/formatted data matching output_format",
+    returns="Analyzed/formatted data",
     permissions="read"
 )
+def llm_analyze_pseudo(data: Optional[Any] = None, task: Optional[str] = None, format: str = "json", **kwargs) -> Any:
+    """
+    Use LLM to analyze, filter, format, or transform data.
+    
+    This is a real callable tool that uses the LLM to process data.
+    Useful for:
+    - Extracting specific fields from complex data
+    - Formatting data for human readability
+    - Filtering data based on criteria
+    - Summarizing or transforming data structures
+    
+    Args:
+        data: The data to analyze (dict, list, JSON, etc.)
+        task: What to do with the data
+        format: Output format preference (json, list, text, table)
+        **kwargs: Support legacy parameter names (input, context, output_format)
+    
+    Returns:
+        Processed data in requested format
+    """
+    import json as json_module
+    from agent.ollama_client import OllamaClient
+    
+    # Support legacy parameter names
+    if data is None and 'input' in kwargs:
+        data = kwargs['input']
+    if task is None and 'context' in kwargs:
+        task = kwargs['context']
+    if 'output_format' in kwargs:
+        format = 'json'  # Always use JSON if output_format specified
+    
+    if data is None or task is None:
+        raise ValueError("Both 'data' (or 'input') and 'task' (or 'context') are required")
+    
+    # Get Ollama client from registry context (injected by tool_registry)
+    # For now, we'll import config and create it
+    import yaml
+    with open('config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    
+    ollama = OllamaClient(
+        base_url=config['ollama']['base_url'],
+        model=config['ollama']['model'],
+        timeout=config['ollama']['timeout']
+    )
+    
+    # Convert data to string for LLM
+    if isinstance(data, (dict, list)):
+        data_str = json_module.dumps(data, indent=2)
+    else:
+        data_str = str(data)
+    
+    # Build prompt
+    prompt = f"""Task: {task}
+
+Data:
+{data_str}
+
+Output the result in {format} format.
+Be concise and accurate."""
+    
+    # Call LLM
+    response = ollama.generate(
+        prompt,
+        system=f"You analyze and transform data. Output only the requested {format} format, no explanations.",
+        temperature=0.3
+    )
+    
+    response_str = str(response) if not isinstance(response, str) else response
+    
+    # Try to parse as JSON if format is json
+    if format == "json":
+        try:
+            # Extract JSON from markdown if present
+            if "```json" in response_str:
+                response_str = response_str.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_str:
+                response_str = response_str.split("```")[1].split("```")[0].strip()
+            
+            return json_module.loads(response_str)
+        except:
+            pass
+    
+    return response_str
 def llm_analyze_pseudo():
     """
     SPECIAL STEP TYPE: LLM Reasoning

@@ -22,7 +22,6 @@ load_dotenv()
 
 from agent.ollama_client import OllamaClient
 from agent.tool_registry import get_registry
-from agent.action_executor import ActionExecutor
 from agent.state_manager import StateManager
 
 # Configure logging
@@ -61,12 +60,6 @@ class AIAgent:
         self.registry = get_registry()
         self.state_manager = StateManager(
             db_path=self.config['state']['database']
-        )
-        self.executor = ActionExecutor(
-            registry=self.registry,
-            dry_run=self.config['agent']['dry_run'],
-            max_actions=self.config['safety']['max_actions_per_run'],
-            cooldown_seconds=self.config['safety']['action_cooldown_seconds']
         )
         
         self.running = False
@@ -150,11 +143,18 @@ class AIAgent:
             logger.info("📊 Execution Summary")
             logger.info("============================================================")
             logger.info(f"Goal: {goal}")
-            logger.info(f"Tasks completed: {result['tasks_completed']}/{result['tasks_total']}")
+            
+            # Handle both old multi-task and new single-step formats
+            if 'tasks_completed' in result:
+                logger.info(f"Tasks completed: {result['tasks_completed']}/{result['tasks_total']}")
+            elif 'plan' in result:
+                logger.info(f"Plan: {result['plan'].get('description', 'Single-step execution')}")
+                logger.info(f"Validated: {'✅' if result.get('validated', False) else '⚠️'}")
+            
             logger.info(f"Duration: {duration:.2f}s")
             logger.info("")
             logger.info("Output:")
-            logger.info(result['output'])
+            logger.info(result.get('output', str(result.get('result', 'No output'))))
             logger.info("============================================================")
             
             return result
