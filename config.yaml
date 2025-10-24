@@ -3,8 +3,8 @@
 # Ollama settings
 ollama:
   base_url: "http://ollama:11434"  # Using Docker network to reach Ollama container
-  model: "llama3.2:3b"  # Smaller, faster to download (2GB vs 4.9GB)
-  timeout: 120  # Increased timeout for complex prompts (was 60)
+  model: "llama3.2:3b"  # Better for structured output (JSON, etc.)
+  timeout: 600  # 5 minutes for generation and analysis
   max_retries: 3
   temperature: 0.7
   

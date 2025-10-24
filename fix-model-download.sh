@@ -116,7 +116,7 @@ case $choice in
         
         curl -X POST "http://localhost:${OLLAMA_PORT}/api/pull" \
             -H "Content-Type: application/json" \
-            -d '{"name": "llama3.1:8b"}' \
+            -d '{"name": "qwen3:4b"}' \
             --no-buffer | while IFS= read -r line; do
                 if echo "$line" | grep -q '"status"'; then
                     status=$(echo "$line" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)

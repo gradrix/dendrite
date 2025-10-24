@@ -1,0 +1,205 @@
+#!/bin/bash
+
+# Interactive AI Assistant - One-shot queries with access to all tools
+# Usage: ./ask.sh "your question here"
+
+set -e
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+print_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Check if question provided
+if [ -z "$1" ]; then
+    echo "Usage: $0 \"your question here\""
+    echo ""
+    echo "Examples:"
+    echo "  $0 \"Get kudos givers for my activities from last 24 hours\""
+    echo "  $0 \"List my last 3 activities\""
+    echo "  $0 \"Show me activities that need to be made public\""
+    echo "  $0 \"What activities got kudos today?\""
+    exit 1
+fi
+
+QUESTION="$1"
+
+print_info "Question: $QUESTION"
+echo ""
+print_info "Generating instruction from question..."
+echo ""
+
+# Determine docker compose command
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
+
+# Create Python script to generate instruction (run in container)
+# Write directly to instructions/ which is mounted in the container
+$DOCKER_COMPOSE run --rm agent python3 - "$QUESTION" << 'PYTHON_SCRIPT'
+import sys
+import os
+import yaml
+
+# Get arguments
+question = sys.argv[1]
+
+from agent.ollama_client import OllamaClient
+
+# Load config
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+
+# Initialize Ollama
+ollama = OllamaClient(
+    base_url=config['ollama']['base_url'],
+    model=config['ollama']['model'],
+    timeout=config['ollama']['timeout']
+)
+
+# Load tool registry to get available tools
+from agent.tool_registry import get_registry
+registry = get_registry()
+
+# Get tool descriptions
+tools_list = []
+for tool_name in sorted(registry.list_tools()):
+    tool_info = registry.get_tool_info(tool_name)
+    access = "read" if tool_info.get('is_read_only', True) else "write"
+    tools_list.append(f"  - {tool_name} ({access}): {tool_info.get('description', 'No description')}")
+
+tools_description = "\\n".join(tools_list)
+
+# Generate instruction steps from question
+# Create planning prompt for LLM (simplified for small models)
+planning_prompt = f"""Create YAML instruction for: "{question}"
+
+TEMPLATE (copy this structure):
+---
+name: "Your Title Here"
+execution_mode: "sequential"
+steps:
+  - id: "step1"
+    tool: toolName
+    params:
+      param1: value1
+    save_as: "result1"
+
+Available tools:
+{tools_description}
+
+SIMPLE EXAMPLES:
+
+Example 1 - Just list data:
+---
+name: "List Activities"
+execution_mode: "sequential"
+steps:
+  - id: "fetch"
+    tool: getMyActivities
+    params:
+      per_page: 3
+    save_as: "activities"
+
+Example 2 - Format data (2 steps):
+---
+name: "List Activities Formatted"
+execution_mode: "sequential"
+steps:
+  - id: "fetch"
+    tool: getMyActivities
+    params:
+      per_page: 3
+    save_as: "data"
+  - id: "format"
+    input: "{{{{data.activities}}}}"
+    context: "Extract name and start_date fields"
+    output_format:
+      activities:
+        - name: "string"
+          date: "string"
+    save_as: "formatted"
+
+RULES:
+- Start with ---
+- Use quotes for strings
+- Template vars: "{{{{name.field}}}}"
+- For formatting: use input/context/output_format (NO tool)
+
+Your question: {question}
+Output YAML only (no text before or after):"""
+
+context = "You are an instruction generator. Output ONLY valid YAML v2 instruction format."
+
+try:
+    response = ollama.generate(planning_prompt, system=context)
+    
+    # Extract YAML from response (remove markdown if present)
+    yaml_content = response
+    if '```yaml' in response:
+        yaml_content = response.split('```yaml')[1].split('```')[0].strip()
+    elif '```' in response:
+        yaml_content = response.split('```')[1].split('```')[0].strip()
+    
+    # Validate YAML syntax before saving
+    try:
+        parsed = yaml.safe_load(yaml_content)
+        if not parsed:
+            raise ValueError("Empty YAML generated")
+        if not isinstance(parsed, dict):
+            raise ValueError("YAML must be a dictionary")
+        if 'steps' not in parsed:
+            raise ValueError("YAML must have 'steps' field")
+    except yaml.YAMLError as e:
+        print(f"❌ Generated invalid YAML syntax: {e}", file=sys.stderr)
+        print(f"\nGenerated content:\n{yaml_content}", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        print(f"❌ Invalid YAML structure: {e}", file=sys.stderr)
+        print(f"\nGenerated content:\n{yaml_content}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Write to instructions directory (mounted in container)
+    with open('instructions/ask_query.yaml', 'w') as f:
+        f.write(yaml_content)
+    
+    print("✅ Generated instruction", file=sys.stderr)
+    sys.exit(0)
+    
+except Exception as e:
+    print(f"❌ Failed to generate instruction: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_SCRIPT
+
+if [ $? -ne 0 ]; then
+    print_error "Failed to generate instruction"
+    exit 1
+fi
+
+# The temp file was created inside the container, copy it from container's volume
+# Actually, let's write directly to instructions/ which is mounted
+print_info "Instruction generated"
+
+# Run with main.py using v2 execution in Docker
+print_info "Executing query in Docker container..."
+echo ""
+
+$DOCKER_COMPOSE run --rm agent python3 main.py --instruction ask_query --v2
+
+# Cleanup
+rm -f "instructions/ask_query.yaml"
+
+print_info "Done!"

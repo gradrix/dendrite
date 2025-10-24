@@ -22,7 +22,6 @@ load_dotenv()
 
 from agent.ollama_client import OllamaClient
 from agent.tool_registry import get_registry
-from agent.instruction_loader import InstructionLoader
 from agent.action_executor import ActionExecutor
 from agent.state_manager import StateManager
 
@@ -60,7 +59,6 @@ class AIAgent:
         )
         
         self.registry = get_registry()
-        self.instruction_loader = InstructionLoader()
         self.state_manager = StateManager(
             db_path=self.config['state']['database']
         )
@@ -103,14 +101,6 @@ class AIAgent:
         for tool in self.registry.list_tools():
             logger.info(f"  - {tool.name} ({tool.permissions}): {tool.description}")
         
-        # Load instructions
-        logger.info("Loading instructions...")
-        instructions = self.instruction_loader.load_all()
-        logger.info(f"Loaded {len(instructions)} instruction files")
-        
-        for inst in instructions:
-            logger.info(f"  - {inst.name} ({inst.schedule})")
-        
         # Cleanup old data
         retention_days = self.config['state'].get('retention_days', 90)
         self.state_manager.cleanup_old_data(retention_days)
@@ -118,331 +108,171 @@ class AIAgent:
         logger.info("Initialization complete!")
         return True
     
-    def execute_instruction(self, instruction_name: str):
-        """Execute a single instruction."""
-        instruction = self.instruction_loader.get(instruction_name)
-        if not instruction:
-            logger.error(f"Instruction not found: {instruction_name}")
-            return
+    def execute_goal(self, goal: str):
+        """
+        Execute a natural language goal using micro-prompting agent.
         
-        logger.info("=" * 60)
-        logger.info(f"Executing: {instruction.name}")
-        logger.info("=" * 60)
+        Perfect for small models (3B params) - uses many tiny LLM calls
+        instead of few large ones.
+        
+        Args:
+            goal: Natural language description (e.g., "List my last 3 activities")
+        """
+        from agent.micro_prompt_agent import MicroPromptAgent
+        
+        logger.info("============================================================")
+        logger.info("🧠 Micro-Prompting Agent (Neuron-Like Architecture)")
+        logger.info("============================================================")
+        logger.info(f"Goal: {goal}")
+        logger.info("")
+        
+        # Create micro-prompt agent
+        agent = MicroPromptAgent(
+            ollama=self.ollama,
+            tool_registry=self.registry,
+            max_retries=3
+        )
+        
+        # Get dry_run setting
+        dry_run = self.config.get('agent', {}).get('dry_run', False)
         
         start_time = time.time()
-        execution_id = self.state_manager.start_execution(instruction.name)
         
         try:
-            # Get available tools (filtered by instruction)
-            available_tools = [
-                tool.to_dict() for tool in self.registry.list_tools()
-                if instruction.is_tool_allowed(tool.name)
-            ]
+            # Execute goal with micro-prompting
+            result = agent.execute_goal(goal, dry_run=dry_run)
             
-            if not available_tools:
-                logger.warning("No tools available for this instruction")
-                self.state_manager.end_execution(
-                    execution_id, 'completed', time.time() - start_time
-                )
-                return
-            
-            logger.info(f"Available tools: {len(available_tools)}")
-            
-            # Build context
-            context = instruction.get_context_prompt()
-            
-            # Add recent history
-            recent = self.state_manager.get_recent_executions(limit=3)
-            if recent:
-                context += "\n\nRecent execution history:\n"
-                for exec in recent:
-                    context += f"  - {exec['instruction_name']} at {exec['timestamp']}: {exec['status']}\n"
-            
-            # Multi-step execution loop
-            max_iterations = self.config.get('agent', {}).get('max_iterations', 10)
-            all_results = []
-            
-            for iteration in range(max_iterations):
-                logger.info(f"\n{'='*60}")
-                logger.info(f"Iteration {iteration + 1}/{max_iterations}")
-                logger.info(f"{'='*60}")
-                
-                # Build prompt with previous results
-                prompt = f"Current time: {datetime.now().isoformat()}\n\n"
-                
-                if all_results:
-                    prompt += "Previous actions and their results:\n"
-                    for prev_result in all_results[-5:]:  # Last 5 results
-                        tool_name = prev_result.get('tool_name', 'unknown')
-                        success = prev_result.get('success', False)
-                        result_data = prev_result.get('result', {})
-                        prompt += f"  - {tool_name}: {'✅ Success' if success else '❌ Failed'}\n"
-                        if result_data:
-                            prompt += f"    Result: {str(result_data)[:200]}\n"
-                    prompt += "\n"
-                
-                prompt += "What actions should be taken next? (Return empty actions array if workflow is complete)"
-                
-                # Query LLM for decision
-                logger.info("Querying LLM for decision...")
-                decision = self.ollama.function_call(
-                    prompt=prompt,
-                    tools=available_tools,
-                    context=context
-                )
-                
-                logger.info(f"LLM Decision: {decision['reasoning']}")
-                logger.info(f"Confidence: {decision['confidence']}")
-                logger.info(f"Actions to execute: {len(decision['actions'])}")
-                
-                # Save decision
-                decision_id = self.state_manager.save_decision(
-                    execution_id=execution_id,
-                    reasoning=decision['reasoning'],
-                    confidence=decision['confidence'],
-                    actions_count=len(decision['actions'])
-                )
-                
-                # Check if no more actions (workflow complete)
-                if not decision['actions']:
-                    logger.info("✅ Workflow complete - LLM returned no more actions")
-                    break
-                
-                # Execute actions
-                results = self.executor.execute_actions(
-                    actions=decision['actions'],
-                    instruction=instruction
-                )
-                
-                # Save action results and build result summary
-                for action, result in zip(decision['actions'], results):
-                    result_record = {
-                        'tool_name': action['tool'],
-                        'parameters': action.get('params'),
-                        'result': result.get('result'),
-                        'success': result.get('success', False),
-                        'error': result.get('error')
-                    }
-                    all_results.append(result_record)
-                    
-                    self.state_manager.save_action(
-                        execution_id=execution_id,
-                        decision_id=decision_id,
-                        **result_record
-                    )
-                
-                # Log iteration summary
-                successful = sum(1 for r in results if r.get('success'))
-                logger.info(f"Iteration complete: {successful}/{len(results)} actions successful")
-            
-            if iteration == max_iterations - 1:
-                logger.warning(f"⚠️  Reached max iterations ({max_iterations}) - workflow may be incomplete")
-            
-            # Mark as complete
             duration = time.time() - start_time
-            self.state_manager.end_execution(
-                execution_id, 'completed', duration
-            )
             
-            logger.info(f"Execution completed in {duration:.2f}s")
-            
-        except Exception as e:
-            logger.error(f"Error during execution: {e}", exc_info=True)
-            duration = time.time() - start_time
-            self.state_manager.end_execution(
-                execution_id, 'error', duration, str(e)
-            )
-    
-    def execute_instruction_v2(self, instruction_name: str):
-        """
-        Execute instruction using step-by-step execution (v2).
-        Each step gets fresh LLM context instead of accumulated context.
-        Better for small models.
-        """
-        from agent.instruction_parser_v2 import InstructionV2
-        from agent.step_executor import StepExecutor
-        from agent.template_engine import TemplateEngine
-        
-        logger.info(f"🚀 Starting execution (v2): {instruction_name}")
-        
-        try:
-            # Load instruction with new parser
-            instruction_path = Path("instructions") / f"{instruction_name}.yaml"
-            if not instruction_path.exists():
-                logger.error(f"Instruction file not found: {instruction_path}")
-                return
-            
-            instruction = InstructionV2(instruction_path)
-            logger.info(f"Loaded: {instruction.name}")
-            logger.info(f"Execution mode: {instruction.execution_mode}")
-            
-            # Create execution record
-            execution_id = self.state_manager.start_execution(instruction.name)
-            start_time = time.time()
-            
-            # Create step executor with fresh template context
-            template = TemplateEngine()
-            executor = StepExecutor(self.ollama, self.registry, template)
-            
-            # Get execution order
-            steps = instruction.get_execution_order()
-            logger.info(f"📋 Execution plan: {len(steps)} steps")
-            for idx, step in enumerate(steps, 1):
-                logger.info(f"  {idx}. {step.id}: {step.description}")
-            
-            # Execute each step independently
-            step_count = 0
-            failed_steps = []
-            
-            for idx, step in enumerate(steps, 1):
-                logger.info(f"\n{'='*60}")
-                logger.info(f"Step {idx}/{len(steps)}: {step.id}")
-                logger.info(f"Description: {step.description}")
-                logger.info(f"Tool: {step.tool}")
-                if step.depends_on:
-                    logger.info(f"Dependencies: {', '.join(step.depends_on)}")
-                if step.is_loop_step():
-                    logger.info(f"Loop: {step.loop}")
-                logger.info(f"{'='*60}\n")
-                
-                try:
-                    # Execute step with fresh LLM context
-                    result = executor.execute_step(
-                        step, 
-                        dry_run=self.config['agent']['dry_run']
-                    )
-                    
-                    step_count += 1
-                    
-                    if result['success']:
-                        logger.info(f"✅ Step {step.id} completed successfully")
-                        
-                        # Log result summary
-                        if result.get('result'):
-                            result_summary = executor._summarize_result(result['result'])
-                            logger.info(f"Result: {result_summary}")
-                    else:
-                        logger.error(f"❌ Step {step.id} failed: {result.get('error', 'Unknown error')}")
-                        failed_steps.append(step.id)
-                        
-                        # Stop if required step failed
-                        if not step.optional:
-                            logger.error(f"Required step failed, stopping execution")
-                            break
-                
-                except Exception as e:
-                    logger.error(f"❌ Exception in step {step.id}: {e}", exc_info=True)
-                    failed_steps.append(step.id)
-                    
-                    if not step.optional:
-                        logger.error(f"Required step failed, stopping execution")
-                        break
-            
-            # Execution summary
-            duration = time.time() - start_time
-            logger.info(f"\n{'='*60}")
-            logger.info(f"📊 Execution Summary")
-            logger.info(f"{'='*60}")
-            logger.info(f"Instruction: {instruction.name}")
-            logger.info(f"Steps completed: {step_count}/{len(steps)}")
+            # Display output
+            logger.info("")
+            logger.info("============================================================")
+            logger.info("📊 Execution Summary")
+            logger.info("============================================================")
+            logger.info(f"Goal: {goal}")
+            logger.info(f"Tasks completed: {result['tasks_completed']}/{result['tasks_total']}")
             logger.info(f"Duration: {duration:.2f}s")
+            logger.info("")
+            logger.info("Output:")
+            logger.info(result['output'])
+            logger.info("============================================================")
             
-            if failed_steps:
-                logger.warning(f"Failed steps: {', '.join(failed_steps)}")
-                status = 'partial'
-            else:
-                logger.info(f"✅ All steps completed successfully!")
-                status = 'completed'
-            
-            # Get all results
-            all_results = executor.get_all_results()
-            logger.info(f"Stored results: {', '.join(all_results.keys())}")
-            
-            # Mark as complete
-            self.state_manager.end_execution(
-                execution_id, status, duration
-            )
-            
-            logger.info(f"{'='*60}\n")
-            
-            return {
-                'success': len(failed_steps) == 0,
-                'steps_completed': step_count,
-                'total_steps': len(steps),
-                'failed_steps': failed_steps,
-                'results': all_results,
-                'duration': duration
-            }
+            return result
             
         except Exception as e:
-            logger.error(f"Error during execution (v2): {e}", exc_info=True)
             duration = time.time() - start_time
-            self.state_manager.end_execution(
-                execution_id, 'error', duration, str(e)
-            )
+            logger.error(f"Execution failed: {e}", exc_info=True)
             return {
                 'success': False,
                 'error': str(e),
                 'duration': duration
             }
     
-    def run_once(self, use_v2=False):
-        """Run all enabled instructions once."""
-        logger.info("Running all enabled instructions once...")
+    def run_once(self, instruction_name: Optional[str] = None):
+        """
+        Run enabled instructions once using micro-prompting.
         
-        if use_v2:
-            logger.info("Using v2 step-by-step execution")
+        Args:
+            instruction_name: Optional specific instruction to run. If None, runs all enabled instructions.
+        """
+        logger.info("Running instructions with micro-prompting...")
         
-        instructions = self.instruction_loader.load_all()
+        # Load instruction files
+        instructions_dir = Path("instructions")
+        instruction_files = list(instructions_dir.glob("*.yaml"))
         
-        for instruction in instructions:
-            if instruction.enabled:
-                if use_v2:
-                    # For v2, convert filename: strava_monitor.yaml -> strava_monitor_v2
-                    filename = Path(instruction.file_path).stem  # Get filename without extension
-                    v2_name = f"{filename}_v2"
-                    
-                    # Check if v2 version exists
-                    v2_path = Path("instructions") / f"{v2_name}.yaml"
-                    if v2_path.exists():
-                        logger.info(f"Found v2 instruction: {v2_name}")
-                        self.execute_instruction_v2(v2_name)
-                    else:
-                        logger.warning(f"V2 instruction not found for {instruction.name} ({v2_name}.yaml), skipping")
-                else:
-                    self.execute_instruction(instruction.name)
+        if not instruction_files:
+            logger.warning("No instruction files found in instructions/")
+            return
+        
+        # Filter to specific instruction if provided
+        if instruction_name:
+            instruction_files = [
+                f for f in instruction_files 
+                if f.stem == instruction_name
+            ]
+            if not instruction_files:
+                logger.error(f"Instruction not found: {instruction_name}")
+                return
+        
+        # Execute each instruction
+        for instruction_file in instruction_files:
+            try:
+                with open(instruction_file, 'r') as f:
+                    instruction_data = yaml.safe_load(f)
+                
+                # Check if enabled (default to True if not specified)
+                if not instruction_data.get('enabled', True):
+                    logger.info(f"Skipping disabled instruction: {instruction_file.stem}")
+                    continue
+                
+                # Get goal from instruction
+                goal = instruction_data.get('goal')
+                if not goal:
+                    logger.warning(f"No goal found in {instruction_file.name}, skipping")
+                    continue
+                
+                logger.info(f"Executing instruction: {instruction_file.stem}")
+                self.execute_goal(goal)
+                
+            except Exception as e:
+                logger.error(f"Error loading {instruction_file.name}: {e}")
         
         logger.info("One-time execution complete!")
     
     def start_scheduler(self):
-        """Start the scheduler for periodic execution."""
-        logger.info("Starting scheduler...")
+        """
+        Start the scheduler for periodic execution using micro-prompting.
+        Reads instruction files and schedules them based on 'schedule' field.
+        """
+        logger.info("Starting scheduler with micro-prompting...")
         
         self.scheduler = BlockingScheduler()
         
-        # Add jobs for hourly instructions
-        hourly_instructions = self.instruction_loader.get_scheduled("hourly")
-        for instruction in hourly_instructions:
-            self.scheduler.add_job(
-                lambda name=instruction.name: self.execute_instruction(name),
-                'interval',
-                hours=1,
-                id=f"hourly_{instruction.name}",
-                name=instruction.name
-            )
-            logger.info(f"Scheduled hourly: {instruction.name}")
+        # Load all instruction files
+        instructions_dir = Path("instructions")
+        instruction_files = list(instructions_dir.glob("*.yaml"))
         
-        # Add jobs for daily instructions
-        daily_instructions = self.instruction_loader.get_scheduled("daily")
-        for instruction in daily_instructions:
-            self.scheduler.add_job(
-                lambda name=instruction.name: self.execute_instruction(name),
-                'cron',
-                hour=9,  # Run at 9 AM
-                id=f"daily_{instruction.name}",
-                name=instruction.name
-            )
-            logger.info(f"Scheduled daily: {instruction.name}")
+        for instruction_file in instruction_files:
+            try:
+                with open(instruction_file, 'r') as f:
+                    instruction_data = yaml.safe_load(f)
+                
+                # Check if enabled
+                if not instruction_data.get('enabled', True):
+                    continue
+                
+                goal = instruction_data.get('goal')
+                schedule = instruction_data.get('schedule', '').lower()
+                
+                if not goal or not schedule:
+                    continue
+                
+                instruction_name = instruction_file.stem
+                
+                # Schedule based on frequency
+                if schedule == 'hourly':
+                    self.scheduler.add_job(
+                        lambda g=goal: self.execute_goal(g),
+                        'interval',
+                        hours=1,
+                        id=f"hourly_{instruction_name}",
+                        name=instruction_name
+                    )
+                    logger.info(f"Scheduled hourly: {instruction_name}")
+                    
+                elif schedule == 'daily':
+                    self.scheduler.add_job(
+                        lambda g=goal: self.execute_goal(g),
+                        'cron',
+                        hour=9,  # Run at 9 AM
+                        id=f"daily_{instruction_name}",
+                        name=instruction_name
+                    )
+                    logger.info(f"Scheduled daily: {instruction_name}")
+                    
+            except Exception as e:
+                logger.error(f"Error loading {instruction_file.name}: {e}")
         
         if not self.scheduler.get_jobs():
             logger.warning("No scheduled jobs found!")
@@ -474,25 +304,26 @@ def main():
     """Main entry point."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='AI Agent for Strava monitoring')
+    parser = argparse.ArgumentParser(description='AI Agent with Micro-Prompting')
     parser.add_argument(
         '--config',
         default='config.yaml',
         help='Path to configuration file'
     )
     parser.add_argument(
-        '--once',
-        action='store_true',
-        help='Run once instead of starting scheduler'
+        '--goal',
+        type=str,
+        help='Natural language goal (e.g., "List my last 3 activities")'
     )
     parser.add_argument(
         '--instruction',
-        help='Run specific instruction only'
+        type=str,
+        help='Load goal from instruction file (YAML with goal field)'
     )
     parser.add_argument(
-        '--v2',
+        '--once',
         action='store_true',
-        help='Use v2 step-by-step execution (better for small models)'
+        help='Run all instructions once'
     )
     
     args = parser.parse_args()
@@ -506,19 +337,47 @@ def main():
         sys.exit(1)
     
     # Run based on mode
-    if args.instruction:
-        # Run specific instruction
-        if args.v2:
-            logger.info("Using v2 step-by-step execution")
-            agent.execute_instruction_v2(args.instruction)
-        else:
-            agent.execute_instruction(args.instruction)
+    if args.goal:
+        # Direct goal execution
+        agent.execute_goal(args.goal)
+    elif args.instruction:
+        # Load goal from instruction file
+        instruction_path = Path("instructions") / f"{args.instruction}.yaml"
+        if not instruction_path.exists():
+            logger.error(f"Instruction file not found: {instruction_path}")
+            sys.exit(1)
+        
+        with open(instruction_path) as f:
+            data = yaml.safe_load(f)
+        
+        goal = data.get('goal')
+        if not goal:
+            logger.error(f"Instruction file must have 'goal' field")
+            sys.exit(1)
+        
+        logger.info(f"Loaded instruction: {data.get('name', args.instruction)}")
+        agent.execute_goal(goal)
     elif args.once:
         # Run all instructions once
-        agent.run_once(use_v2=args.v2)
+        instructions_dir = Path("instructions")
+        for filepath in instructions_dir.glob("*.yaml"):
+            if filepath.stem.startswith("_") or filepath.stem.endswith("_v2"):
+                continue  # Skip private and old v2 files
+            
+            with open(filepath) as f:
+                data = yaml.safe_load(f)
+            
+            goal = data.get('goal')
+            if goal:
+                logger.info(f"\n{'='*60}")
+                logger.info(f"Executing: {filepath.stem}")
+                logger.info(f"{'='*60}")
+                agent.execute_goal(goal)
     else:
         # Start scheduler
-        agent.start_scheduler()
+        logger.info("Scheduler mode not yet implemented for micro-prompting")
+        logger.info("Use --goal or --instruction or --once")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

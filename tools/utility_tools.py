@@ -15,6 +15,47 @@ from agent.state_manager import StateManager
 logger = logging.getLogger(__name__)
 
 
+# SPECIAL: LLM Reasoning Step (not a callable tool, but a step type)
+# This is documented here so it appears in tool listings for ask.sh
+@tool(
+    description="Use LLM to analyze, filter, format, or transform data. NOT a regular tool - use 'input' and 'output_format' fields instead of 'tool' and 'params'. Example: analyze activities to find which need updates, format data for display, extract specific fields, summarize results.",
+    parameters=[
+        {"name": "input", "type": "any", "description": "Data to analyze (use template variables like {{step_id.result}})", "required": True},
+        {"name": "context", "type": "string", "description": "Instructions for what to analyze/extract/format", "required": True},
+        {"name": "output_format", "type": "object", "description": "JSON structure defining expected output format", "required": True}
+    ],
+    returns="Analyzed/formatted data matching output_format",
+    permissions="read"
+)
+def llm_analyze_pseudo():
+    """
+    SPECIAL STEP TYPE: LLM Reasoning
+    
+    This is NOT a callable tool. It's a special step type that uses the LLM
+    to analyze, filter, format, or transform data.
+    
+    Instead of using 'tool' and 'params', use:
+    - input: "{{previous_step.result}}"
+    - context: "What to analyze/extract/format"
+    - output_format: {expected: "structure"}
+    
+    Example YAML:
+      - id: "format_output"
+        description: "Format activities for display"
+        input: "{{fetch_activities.result.activities}}"
+        context: "Extract only activity name and date, format as clean list"
+        output_format:
+          activities:
+            - name: "string"
+              date: "string"
+        save_as: "formatted"
+    
+    This tool registration exists only for documentation purposes.
+    The actual execution is handled by StepExecutor._execute_llm_step().
+    """
+    raise NotImplementedError("llm_analyze is not a callable tool - it's a step type. Use 'input' and 'output_format' fields in your step definition.")
+
+
 @tool(
     description="Get current date and time in ISO format with timezone",
     parameters=[],
