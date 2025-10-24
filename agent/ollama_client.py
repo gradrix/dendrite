@@ -163,26 +163,32 @@ class OllamaClient:
         # Create system prompt for function calling
         system_prompt = f"""You are an AI agent that helps monitor and interact with Strava activities.
 
-You have access to these tools:
+Available tools:
 {tool_descriptions}
 
-When responding, you MUST output valid JSON in this exact format:
+REQUIRED OUTPUT FORMAT (all fields mandatory):
 {{
-  "reasoning": "Brief explanation of your decision",
-  "actions": [
-    {{"tool": "tool_name", "params": {{"param1": "value1"}}}},
-  ],
+  "reasoning": "Brief explanation",
+  "actions": [{{"tool": "tool_name", "params": {{"key": "value"}}}}],
   "confidence": 0.95,
   "requires_approval": false
 }}
 
-Rules:
-1. Only use tools that are listed above
-2. Think step by step about what actions to take
-3. Set requires_approval to true for significant write operations
-4. If no action is needed, return empty actions array
-5. Always provide reasoning for your decisions
-6. Output ONLY valid JSON, no markdown formatting or additional text
+ALL 4 FIELDS ARE REQUIRED: reasoning, actions, confidence, requires_approval
+
+PARAM RULES:
+- Use ONLY literals: numbers, strings, booleans, null, arrays, objects
+- ❌ NO function calls: {{"after_unix": getCurrentDateTime().unix}}
+- ✓ YES literals: {{"after_unix": 1729691400}} or {{"hours": 24}}
+
+MULTI-STEP: If you need data from tool A for tool B:
+1. Return actions with tool A
+2. System executes, calls you again with results
+3. Then use those values in tool B
+
+Example: Step 1: [{{"tool": "getCurrentDateTime", "params": {{}}}}] → get timestamp → Step 2: [{{"tool": "getMyActivities", "params": {{"after_unix": 1729691400}}}}]
+
+Rules: Only use listed tools • Set requires_approval=true for writes • Output ONLY JSON
 """
         
         # Add context if provided
@@ -265,12 +271,31 @@ Rules:
         tools: List[Dict[str, Any]]
     ) -> bool:
         """Validate that the response has the correct structure."""
-        required_keys = {"reasoning", "actions", "confidence", "requires_approval"}
-        if not all(key in response for key in required_keys):
+        required_keys = {"reasoning", "actions"}
+        missing_keys = required_keys - set(response.keys())
+        
+        if missing_keys:
+            logger.warning(f"Response missing required keys: {missing_keys}")
             return False
+        
+        # Auto-fill optional fields with defaults if missing
+        if "confidence" not in response:
+            logger.debug("Auto-filling missing 'confidence' with default 0.8")
+            response["confidence"] = 0.8
+        
+        if "requires_approval" not in response:
+            # Check if any write actions - if so, default to requiring approval
+            has_write_actions = any(
+                any(t["name"] == action.get("tool") and t.get("permissions") == "write" 
+                    for t in tools)
+                for action in response.get("actions", [])
+            )
+            response["requires_approval"] = has_write_actions
+            logger.debug(f"Auto-filling 'requires_approval' with {has_write_actions} (has_write_actions={has_write_actions})")
         
         # Validate actions
         if not isinstance(response["actions"], list):
+            logger.warning(f"Actions is not a list: {type(response['actions'])}")
             return False
         
         # Get valid tool names
@@ -279,8 +304,13 @@ Rules:
         for action in response["actions"]:
             if not isinstance(action, dict):
                 return False
-            if "tool" not in action or "params" not in action:
+            if "tool" not in action:
                 return False
+            
+            # Auto-add empty params if missing (for tools with no parameters)
+            if "params" not in action:
+                action["params"] = {}
+            
             # Check if tool exists
             if action["tool"] not in valid_tools:
                 logger.warning(f"Unknown tool requested: {action['tool']}")

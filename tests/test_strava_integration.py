@@ -97,7 +97,25 @@ def load_config():
     """Load configuration from config.yaml"""
     config_path = Path(__file__).parent.parent / "config.yaml"
     with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    
+    # Smart Ollama URL detection
+    ollama_url = config['ollama']['base_url']
+    
+    # If URL uses 'ollama' hostname, check if we can resolve it
+    if 'ollama:' in ollama_url or '//ollama/' in ollama_url:
+        import socket
+        try:
+            # Try to resolve 'ollama' hostname
+            socket.gethostbyname('ollama')
+            print(f"✅ Using Docker network: {ollama_url}")
+        except socket.gaierror:
+            # Can't resolve 'ollama', likely running locally
+            ollama_url = ollama_url.replace('ollama:', 'localhost:')
+            config['ollama']['base_url'] = ollama_url
+            print(f"⚠️  Running locally, switched to: {ollama_url}")
+    
+    return config
 
 
 def load_strava_cookies():
@@ -235,6 +253,83 @@ def discover_strava_tools():
         return None
 
 
+def test_dashboard_feed_direct(registry):
+    """
+    Direct test: Call getDashboardFeed and print results
+    
+    This directly calls the tool without LLM involvement to test the feed parsing.
+    """
+    print_separator("Dashboard Feed Direct Test")
+    
+    try:
+        # Get the dashboard feed tool
+        dashboard_tool = registry.get("getDashboardFeed")
+        if not dashboard_tool:
+            print("❌ getDashboardFeed tool not found")
+            return False
+        
+        print("Fetching last hour of activities from dashboard feed...")
+        
+        # Call with 1 hour filter
+        result = dashboard_tool.execute(hours_ago=1)
+        
+        if not result.get("success"):
+            print(f"❌ Feed fetch failed: {result.get('error')}")
+            return False
+        
+        activities = result.get("activities", [])
+        count = result.get("count", 0)
+        
+        print(f"\n✅ Found {count} activities in the last hour")
+        
+        if count == 0:
+            print("\n   No activities in the last hour. Trying last 24 hours...")
+            result = dashboard_tool.execute(hours_ago=24)
+            activities = result.get("activities", [])
+            count = result.get("count", 0)
+            print(f"\n✅ Found {count} activities in the last 24 hours")
+        
+        if count > 0:
+            print("\n" + "="*60)
+            print("  ACTIVITY FEED SUMMARY")
+            print("="*60)
+            
+            for i, activity in enumerate(activities[:10], 1):  # Show first 10
+                athlete = activity.get("athlete_name", "Unknown")
+                act_type = activity.get("activity_type", "Unknown")
+                act_name = activity.get("activity_name", "Untitled")
+                kudos_status = "✅ You gave kudos" if activity.get("you_gave_kudos") else "⭕ Not kudoed yet"
+                total_kudos = activity.get("total_kudos", 0)
+                visibility = activity.get("visibility", "unknown")
+                
+                print(f"\n{i}. {athlete} - {act_type}")
+                print(f"   Title: {act_name}")
+                print(f"   {kudos_status} (Total: {total_kudos} kudos)")
+                print(f"   Visibility: {visibility}")
+                print(f"   Activity ID: {activity.get('activity_id')}")
+            
+            if count > 10:
+                print(f"\n   ... and {count - 10} more activities")
+            
+            # Summary stats
+            kudoed_count = sum(1 for a in activities if a.get("you_gave_kudos"))
+            not_kudoed_count = count - kudoed_count
+            
+            print("\n" + "-"*60)
+            print(f"  KUDOS STATS:")
+            print(f"  - You gave kudos to: {kudoed_count}/{count} activities")
+            print(f"  - Not kudoed yet: {not_kudoed_count} activities")
+            print("-"*60)
+        
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ ERROR during dashboard feed test: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_strava_api_with_llm(client, registry):
     """
     Main integration test: Use LLM to call Strava API
@@ -262,14 +357,17 @@ def test_strava_api_with_llm(client, registry):
         for tool in all_tools
     ]
     
-    # Prompt for LLM
-    prompt = """Please fetch recent Strava activities. 
-Start by getting my last day's activities (last 24 hours), and also check the friend feed to see what others are doing.
-Use the available tools to get this information."""
+    # Prompt for LLM - updated to use dashboard feed
+    prompt = """Please get the dashboard feed and tell me:
+1. What activities happened in the last hour (or last 24 hours if none in last hour)
+2. Which athletes posted
+3. Which ones I haven't given kudos to yet
+
+Use getDashboardFeed tool to get this information."""
 
     context = """You are a helpful AI assistant that can call Strava API tools.
-Your goal is to fetch recent Strava activities and provide information about them.
-The user wants to know about their recent activities and what their friends are doing."""
+Your goal is to fetch the dashboard feed and summarize recent activities.
+Focus on showing who posted, what activity type, and kudos status."""
 
     print("Sending request to LLM...")
     print(f"\nPrompt: {prompt[:100]}...")
@@ -305,7 +403,8 @@ The user wants to know about their recent activities and what their friends are 
         success_count = 0
         for i, action in enumerate(actions, 1):
             tool_name = action.get('tool')
-            parameters = action.get('parameters', {})
+            # Support both 'params' (from LLM) and 'parameters' (legacy)
+            parameters = action.get('params') or action.get('parameters', {})
             
             print(f"\nAction {i}/{len(actions)}: {tool_name}")
             print(f"Parameters: {json.dumps(parameters, indent=2)}")
@@ -331,9 +430,19 @@ The user wants to know about their recent activities and what their friends are 
                         activities = result['activities']
                         print(f"  - Found {len(activities)} activities")
                         for idx, activity in enumerate(activities[:3], 1):
-                            name = activity.get('name', 'Unknown')
-                            activity_type = activity.get('type', 'Unknown')
-                            print(f"    {idx}. {name} ({activity_type})")
+                            # Support both formats: dashboard feed and getMyActivities
+                            name = activity.get('athlete_name') or activity.get('name', 'Unknown')
+                            activity_type = activity.get('activity_type') or activity.get('type', 'Unknown')
+                            activity_title = activity.get('activity_name', '')
+                            
+                            # Format based on which fields exist
+                            if 'athlete_name' in activity:
+                                # Dashboard feed format
+                                kudos = "✅" if activity.get('you_gave_kudos') else "⭕"
+                                print(f"    {idx}. {name} - {activity_type}: {activity_title} {kudos}")
+                            else:
+                                # getMyActivities format
+                                print(f"    {idx}. {name} ({activity_type})")
                         if len(activities) > 3:
                             print(f"    ... and {len(activities) - 3} more")
                     else:
@@ -416,8 +525,16 @@ def main():
         print("\n⚠️  Cannot proceed without tool registry")
         return 1
     
-    # Run the main integration test
-    success = test_strava_api_with_llm(client, registry)
+    # Test 1: Direct dashboard feed test (no LLM)
+    print_separator("TEST 1: Direct Dashboard Feed Test")
+    dashboard_success = test_dashboard_feed_direct(registry)
+    
+    # Test 2: Full LLM integration test
+    print_separator("TEST 2: LLM Function Calling Test")
+    llm_success = test_strava_api_with_llm(client, registry)
+    
+    # Combined success
+    success = dashboard_success and llm_success
     
     if success:
         print("\n" + "="*60)
