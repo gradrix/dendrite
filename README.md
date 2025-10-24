@@ -203,25 +203,55 @@ print(response.json()["response"])
 
 ## GPU Support
 
-To enable GPU acceleration:
+This setup can use your GPU when available. By default it runs in auto mode:
 
-1. Install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- auto (default): if a compatible GPU is detected and Docker is configured, it enables `--gpus all`; otherwise it falls back to CPU.
+- true: always request GPU (requires NVIDIA Container Toolkit).
+- false: force CPU-only.
 
-2. Set in `.env`:
-   ```bash
-   USE_GPU=true
-   ```
+Steps to use GPU acceleration:
 
-3. Uncomment GPU section in `docker-compose.yml`:
-   ```yaml
-   deploy:
-     resources:
-       reservations:
-         devices:
-           - driver: nvidia
-             count: 1
-             capabilities: [gpu]
-   ```
+1. Install NVIDIA drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+2. Ensure `.env` has the desired mode (default is auto):
+  ```bash
+  USE_GPU=auto   # or true/false
+  ```
+3. Run the setup normally:
+  ```bash
+  ./setup-ollama.sh
+  ```
+
+The script will print whether GPU is enabled. If you force `USE_GPU=true` but Docker isn't configured, container startup may fail.
+
+### WSL notes (Windows Subsystem for Linux)
+
+If you are running in WSL and see an error like:
+
+```
+docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]
+```
+
+Follow one of these paths:
+
+- Docker Desktop (recommended):
+  1. Install latest NVIDIA Windows driver.
+  2. In Docker Desktop (Windows): Settings → Resources → WSL Integration → enable your distro; ensure GPU support is enabled.
+  3. Restart Docker Desktop and WSL (`wsl --shutdown`).
+
+- Native dockerd inside WSL:
+  ```bash
+  # In WSL
+  sudo apt-get update
+  sudo apt-get install -y nvidia-container-toolkit
+  sudo nvidia-ctk runtime configure --runtime=docker
+  sudo service docker restart   # or: sudo systemctl restart docker (if systemd enabled)
+  ```
+
+Then verify:
+```bash
+docker info | grep -i runtimes    # should include nvidia
+docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
+```
 
 ## Troubleshooting
 
@@ -582,8 +612,8 @@ OLLAMA_CPU_LIMIT=4
 #### GPU Acceleration
 For NVIDIA GPUs (10-50x faster inference):
 ```bash
-# In .env
-USE_GPU=true
+# In .env (auto uses GPU if available)
+USE_GPU=auto   # or true/false
 ```
 
 ### Extending the System

@@ -23,7 +23,8 @@ else
     OLLAMA_HOST=${OLLAMA_HOST:-0.0.0.0}
     DEFAULT_MODEL=${DEFAULT_MODEL:-llama3.1:8b}
     DOCKER_NETWORK=${DOCKER_NETWORK:-ollama-network}
-    USE_GPU=${USE_GPU:-false}
+    # GPU mode: true|false|auto (default: auto)
+    USE_GPU=${USE_GPU:-auto}
     API_TIMEOUT=${API_TIMEOUT:-300}
     MAX_RETRIES=${MAX_RETRIES:-30}
     RETRY_INTERVAL=${RETRY_INTERVAL:-10}
@@ -55,6 +56,34 @@ check_docker() {
     fi
     
     print_info "Docker is available and running"
+}
+
+# Detect if GPU is available and docker can access it
+gpu_available() {
+    # Basic checks: NVIDIA driver + device files (include WSL's /dev/dxg)
+    if [ -x "$(command -v nvidia-smi)" ] || [ -e "/dev/nvidiactl" ] || [ -e "/dev/dri" ] || [ -e "/dev/dxg" ]; then
+        # Check Docker supports --gpus flag (NVIDIA Container Toolkit / Docker Desktop)
+        if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -qi 'nvidia'; then
+            return 0
+        fi
+
+        # Fallback heuristic: newer Docker supports --gpus even without explicit runtime listing
+        if docker run --help 2>/dev/null | grep -q -- "--gpus"; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Detect if running inside WSL
+is_wsl() {
+    if grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null; then
+        return 0
+    fi
+    if grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
+        return 0
+    fi
+    return 1
 }
 
 # Function to create Docker network if it doesn't exist
@@ -96,11 +125,33 @@ start_ollama_container() {
         DOCKER_RUN_CMD="$DOCKER_RUN_CMD -p ${OLLAMA_HOST}:${OLLAMA_PORT}:11434"
         DOCKER_RUN_CMD="$DOCKER_RUN_CMD -v ollama-data:/root/.ollama"
         
-        # Add GPU support if enabled
-        if [ "$USE_GPU" = "true" ]; then
-            print_info "GPU support enabled"
-            DOCKER_RUN_CMD="$DOCKER_RUN_CMD --gpus all"
-        fi
+        # Decide GPU usage: true|false|auto
+        case "$USE_GPU" in
+            true)
+                print_info "GPU requested via USE_GPU=true"
+                DOCKER_RUN_CMD="$DOCKER_RUN_CMD --gpus all"
+                ;;
+            auto)
+                if gpu_available; then
+                    print_info "GPU detected and available to Docker (auto): enabling --gpus all"
+                    DOCKER_RUN_CMD="$DOCKER_RUN_CMD --gpus all"
+                else
+                    print_warn "No usable GPU detected or Docker not configured for GPU (auto): running on CPU"
+                    if is_wsl; then
+                        print_warn "WSL detected. To enable GPU:"
+                        echo "  - Ensure Windows NVIDIA drivers are installed"
+                        echo "  - In Docker Desktop (Windows): enable WSL integration for your distro and GPU support"
+                        echo "  - Or install NVIDIA Container Toolkit in WSL:"
+                        echo "      sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit"
+                        echo "      sudo nvidia-ctk runtime configure --runtime=docker && sudo service docker restart"
+                    fi
+                fi
+                ;;
+            *)
+                # explicit false or any other value
+                print_info "GPU disabled (USE_GPU=$USE_GPU)"
+                ;;
+        esac
         
         # Add resource limits if specified
         if [ -n "$OLLAMA_MEMORY_LIMIT" ]; then
