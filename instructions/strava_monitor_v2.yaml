@@ -1,0 +1,171 @@
+# Strava Activity Monitor - V2 Step-by-Step Format
+# Each step executed with fresh LLM context for better small model performance
+
+name: "Strava Activity Monitor"
+description: "Monitor Strava activities, update visibility, enable 3D maps, track kudos"
+execution_mode: "sequential"  # Execute steps in order as defined
+
+steps:
+  # Step 1: Get current timestamp
+  - id: "get_current_time"
+    description: "Get current timestamp for all operations"
+    tool: "getCurrentDateTime"
+    params: {}
+    save_as: "current_time"
+  
+  # Step 2: Calculate 24 hours ago
+  - id: "get_24h_ago"
+    description: "Calculate timestamp for 24 hours ago"
+    tool: "getDateTimeHoursAgo"
+    params:
+      hours: 24
+    save_as: "time_24h_ago"
+  
+  # Step 3: Check when we last fetched feed
+  - id: "load_last_feed_check"
+    description: "Load timestamp of last feed check"
+    tool: "loadState"
+    params:
+      key: "last_feed_check"
+      default: null
+    save_as: "last_feed_check"
+    optional: true  # OK if this fails
+  
+  # Step 4: Fetch recent activities
+  - id: "fetch_activities"
+    description: "Get my activities from last 24 hours"
+    tool: "getMyActivities"
+    params_template:
+      after_unix: "{{time_24h_ago.datetime.unix_timestamp}}"
+      before_unix: "{{current_time.datetime.unix_timestamp}}"
+      per_page: 100
+    depends_on: ["get_current_time", "get_24h_ago"]
+    save_as: "my_activities"
+  
+  # Step 5: Analyze which activities need updates
+  - id: "analyze_activities"
+    description: "Determine which activities should be made public with 3D maps"
+    tool: "llm_analyze"
+    context: |
+      Analyze the activities and determine which ones need updates.
+      
+      RULES:
+      1. Make PUBLIC if:
+         - Currently private (visibility != "everyone")
+         - AND type is NOT "Walk"
+         - AND if type is "Ride", distance must be >= 10km (10000 meters)
+      
+      2. Keep PRIVATE if:
+         - Type is "Walk" (walks always stay private)
+         - OR type is "Ride" AND distance < 10km
+         - OR already public (visibility == "everyone")
+      
+      For each activity, provide:
+      - activity_id: The ID to update
+      - reason: Why it needs update
+      
+      Return ONLY activities that NEED UPDATES (not already public, not walks, etc.)
+    input: "{{my_activities.activities}}"
+    output_format:
+      activities_to_update:
+        - activity_id: 0
+          name: "string"
+          current_visibility: "string"
+          reason: "string"
+      activities_already_public: 0
+      activities_kept_private: 0
+      summary: "string"
+    depends_on: ["fetch_activities"]
+    save_as: "analysis"
+  
+  # Step 6: Update activity visibility (loop over qualifying activities)
+  - id: "update_visibility"
+    description: "Make qualifying activities public"
+    tool: "updateActivity"
+    loop: "{{analysis.activities_to_update}}"
+    params_template:
+      activity_id: "{{loop.item.activity_id}}"
+      visibility: "everyone"
+    depends_on: ["analyze_activities"]
+    optional: true  # Don't fail if no activities to update
+  
+  # Step 7: Enable 3D maps (loop over qualifying activities)
+  - id: "enable_3d_maps"
+    description: "Enable 3D satellite maps for updated activities"
+    tool: "updateActivity"
+    loop: "{{analysis.activities_to_update}}"
+    params_template:
+      activity_id: "{{loop.item.activity_id}}"
+      selected_polyline_style: "fatmap_satellite_3d"
+    depends_on: ["analyze_activities"]
+    optional: true  # Don't fail if no activities to update
+  
+  # Step 8: Get kudos for each activity
+  - id: "fetch_kudos"
+    description: "Get kudos givers for each recent activity"
+    tool: "getActivityKudos"
+    loop: "{{my_activities.activities}}"
+    params_template:
+      activity_id: "{{loop.item.id}}"
+    depends_on: ["fetch_activities"]
+    aggregate: true
+    save_as: "all_kudos"
+    optional: true  # Don't fail if activities have no kudos
+  
+  # Step 9: Load existing kudos givers from state
+  - id: "load_kudos_givers"
+    description: "Load list of people who have given kudos before"
+    tool: "loadState"
+    params:
+      key: "kudos_givers"
+      default: []
+    save_as: "existing_kudos_givers"
+    optional: true
+  
+  # Step 10: Merge and save kudos givers
+  - id: "save_kudos_givers"
+    description: "Update kudos givers list with new people"
+    tool: "llm_analyze"
+    context: |
+      Merge the new kudos with existing kudos givers.
+      Extract unique athlete IDs and names.
+      Avoid duplicates - if an athlete ID already exists, keep the existing entry.
+      Return updated list with all unique kudos givers.
+    input:
+      new_kudos: "{{all_kudos}}"
+      existing_givers: "{{existing_kudos_givers}}"
+    output_format:
+      updated_givers:
+        - athlete_id: 0
+          name: "string"
+          username: "string"
+      new_givers_count: 0
+      total_givers_count: 0
+    depends_on: ["fetch_kudos", "load_kudos_givers"]
+    save_as: "merged_kudos"
+    optional: true
+  
+  # Step 11: Persist merged kudos list
+  - id: "persist_kudos"
+    description: "Save updated kudos givers list to state"
+    tool: "saveState"
+    params_template:
+      key: "kudos_givers"
+      value: "{{merged_kudos.updated_givers}}"
+    depends_on: ["save_kudos_givers"]
+    optional: true
+  
+  # Step 12: Save feed check timestamp
+  - id: "save_feed_timestamp"
+    description: "Record when we last checked the feed"
+    tool: "saveState"
+    params_template:
+      key: "last_feed_check"
+      value: "{{current_time.datetime.iso}}"
+    depends_on: ["get_current_time"]
+
+# Permission settings
+permissions:
+  allow_write: true
+  allow_updateactivity: true
+  requires_approval: []

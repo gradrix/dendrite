@@ -32,6 +32,7 @@ print_header() {
 # Parse arguments
 MODE="scheduler"
 INSTRUCTION=""
+USE_V2=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -44,12 +45,17 @@ while [[ $# -gt 0 ]]; do
             INSTRUCTION="$2"
             shift 2
             ;;
+        --v2)
+            USE_V2=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --once                Run all instructions once and exit"
             echo "  --instruction NAME    Run specific instruction only"
+            echo "  --v2                  Use v2 step-by-step execution (better for small models)"
             echo "  --help, -h           Show this help message"
             echo ""
             echo "Without options, starts the scheduler for continuous operation"
@@ -128,17 +134,24 @@ print_info "Ollama is ready"
 print_info "Building AI Agent Docker image..."
 $DOCKER_COMPOSE build agent
 
+# Build v2 flag if needed
+V2_FLAG=""
+if [ "$USE_V2" = true ]; then
+    V2_FLAG="--v2"
+    print_info "Using v2 step-by-step execution"
+fi
+
 # Determine the command to run
 case $MODE in
     once)
         print_header "Running Agent Once"
         print_info "Agent will run all instructions once and exit"
-        $DOCKER_COMPOSE run --rm agent python main.py --once
+        $DOCKER_COMPOSE run --rm agent python main.py --once $V2_FLAG
         ;;
     instruction)
         print_header "Running Specific Instruction"
         print_info "Instruction: $INSTRUCTION"
-        $DOCKER_COMPOSE run --rm agent python main.py --instruction "$INSTRUCTION"
+        $DOCKER_COMPOSE run --rm agent python main.py --instruction "$INSTRUCTION" $V2_FLAG
         ;;
     scheduler)
         print_header "Starting Agent Scheduler"
@@ -147,6 +160,10 @@ case $MODE in
         echo ""
         
         # Start agent service
+        # Note: Scheduler currently uses v1 execution only
+        if [ "$USE_V2" = true ]; then
+            print_warn "Note: --v2 flag is ignored in scheduler mode (not yet implemented)"
+        fi
         $DOCKER_COMPOSE up agent
         ;;
 esac

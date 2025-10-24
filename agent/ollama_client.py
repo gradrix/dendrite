@@ -350,3 +350,121 @@ Rules: Only use listed tools • Set requires_approval=true for writes • Outpu
         except Exception as e:
             logger.error(f"Ollama health check failed: {e}")
             return False
+    
+    def extract_params(
+        self,
+        step_description: str,
+        tool_name: str,
+        tool_params: List[Dict[str, Any]],
+        context_data: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Extract parameters for a tool using LLM (Step-by-step execution helper).
+        
+        This is a focused LLM task: given a tool and its parameters,
+        extract the appropriate values.
+        
+        Args:
+            step_description: Description of what this step should do
+            tool_name: Name of the tool to call
+            tool_params: List of parameter definitions
+            context_data: Optional context from previous steps
+            
+        Returns:
+            Dict of parameters or None if extraction fails
+        """
+        # Build prompt
+        prompt = f"""Task: {step_description}
+
+Tool: {tool_name}
+Parameters needed:"""
+        
+        for p in tool_params:
+            param_name = p.get('name', 'unknown')
+            param_type = p.get('type', 'any')
+            required = p.get('required', False)
+            param_desc = p.get('description', '')
+            req_str = "(required)" if required else "(optional)"
+            prompt += f"\n  - {param_name} ({param_type}) {req_str}: {param_desc}"
+        
+        if context_data:
+            prompt += "\n\nAvailable context data:"
+            prompt += f"\n{json.dumps(context_data, indent=2)}"
+        
+        prompt += "\n\nDetermine the parameters for this tool call."
+        prompt += "\n\nRespond ONLY with valid JSON:"
+        prompt += '\n{"reasoning": "brief explanation", "params": {"param_name": "value"}}'
+        
+        system_context = "You are a parameter extractor. Output ONLY valid JSON, no markdown, no extra text."
+        
+        try:
+            response = self.generate(prompt, system=system_context)
+            
+            # Parse JSON
+            import re
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                param_data = json.loads(json_match.group())
+                params = param_data.get('params', {})
+                reasoning = param_data.get('reasoning', '')
+                
+                logger.debug(f"Extracted params: {params} (reasoning: {reasoning})")
+                return params
+            else:
+                logger.error(f"Could not parse parameters from LLM response")
+                return None
+        
+        except Exception as e:
+            logger.error(f"Parameter extraction failed: {e}")
+            return None
+    
+    def analyze_data(
+        self,
+        task_description: str,
+        input_data: Any,
+        output_format: Dict[str, Any],
+        context: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Ask LLM to analyze data and return structured output (Step-by-step helper).
+        
+        This is for LLM reasoning steps in instructions.
+        
+        Args:
+            task_description: What the LLM should analyze/decide
+            input_data: Data to analyze
+            output_format: Required output structure
+            context: Optional additional context
+            
+        Returns:
+            Dict with analysis result or None if fails
+        """
+        # Build prompt
+        prompt = task_description
+        
+        if context:
+            prompt += f"\n\n{context}"
+        
+        prompt += f"\n\nInput data:\n{json.dumps(input_data, indent=2)}"
+        prompt += f"\n\nRequired output format:\n{json.dumps(output_format, indent=2)}"
+        prompt += "\n\nAnalyze the data and respond ONLY with valid JSON matching the required format."
+        
+        system_context = "You are a helpful assistant that analyzes data and returns structured JSON. Output ONLY valid JSON, no markdown, no extra text."
+        
+        try:
+            response = self.generate(prompt, system=system_context)
+            
+            # Parse JSON
+            import re
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                logger.debug(f"Analysis result: {list(result.keys())}")
+                return result
+            else:
+                logger.error(f"Could not parse analysis result from LLM response")
+                return None
+        
+        except Exception as e:
+            logger.error(f"Data analysis failed: {e}")
+            return None

@@ -253,15 +253,164 @@ class AIAgent:
                 execution_id, 'error', duration, str(e)
             )
     
-    def run_once(self):
+    def execute_instruction_v2(self, instruction_name: str):
+        """
+        Execute instruction using step-by-step execution (v2).
+        Each step gets fresh LLM context instead of accumulated context.
+        Better for small models.
+        """
+        from agent.instruction_parser_v2 import InstructionV2
+        from agent.step_executor import StepExecutor
+        from agent.template_engine import TemplateEngine
+        
+        logger.info(f"🚀 Starting execution (v2): {instruction_name}")
+        
+        try:
+            # Load instruction with new parser
+            instruction_path = Path("instructions") / f"{instruction_name}.yaml"
+            if not instruction_path.exists():
+                logger.error(f"Instruction file not found: {instruction_path}")
+                return
+            
+            instruction = InstructionV2(instruction_path)
+            logger.info(f"Loaded: {instruction.name}")
+            logger.info(f"Execution mode: {instruction.execution_mode}")
+            
+            # Create execution record
+            execution_id = self.state_manager.start_execution(instruction.name)
+            start_time = time.time()
+            
+            # Create step executor with fresh template context
+            template = TemplateEngine()
+            executor = StepExecutor(self.ollama, self.registry, template)
+            
+            # Get execution order
+            steps = instruction.get_execution_order()
+            logger.info(f"📋 Execution plan: {len(steps)} steps")
+            for idx, step in enumerate(steps, 1):
+                logger.info(f"  {idx}. {step.id}: {step.description}")
+            
+            # Execute each step independently
+            step_count = 0
+            failed_steps = []
+            
+            for idx, step in enumerate(steps, 1):
+                logger.info(f"\n{'='*60}")
+                logger.info(f"Step {idx}/{len(steps)}: {step.id}")
+                logger.info(f"Description: {step.description}")
+                logger.info(f"Tool: {step.tool}")
+                if step.depends_on:
+                    logger.info(f"Dependencies: {', '.join(step.depends_on)}")
+                if step.is_loop_step():
+                    logger.info(f"Loop: {step.loop}")
+                logger.info(f"{'='*60}\n")
+                
+                try:
+                    # Execute step with fresh LLM context
+                    result = executor.execute_step(
+                        step, 
+                        dry_run=self.config['agent']['dry_run']
+                    )
+                    
+                    step_count += 1
+                    
+                    if result['success']:
+                        logger.info(f"✅ Step {step.id} completed successfully")
+                        
+                        # Log result summary
+                        if result.get('result'):
+                            result_summary = executor._summarize_result(result['result'])
+                            logger.info(f"Result: {result_summary}")
+                    else:
+                        logger.error(f"❌ Step {step.id} failed: {result.get('error', 'Unknown error')}")
+                        failed_steps.append(step.id)
+                        
+                        # Stop if required step failed
+                        if not step.optional:
+                            logger.error(f"Required step failed, stopping execution")
+                            break
+                
+                except Exception as e:
+                    logger.error(f"❌ Exception in step {step.id}: {e}", exc_info=True)
+                    failed_steps.append(step.id)
+                    
+                    if not step.optional:
+                        logger.error(f"Required step failed, stopping execution")
+                        break
+            
+            # Execution summary
+            duration = time.time() - start_time
+            logger.info(f"\n{'='*60}")
+            logger.info(f"📊 Execution Summary")
+            logger.info(f"{'='*60}")
+            logger.info(f"Instruction: {instruction.name}")
+            logger.info(f"Steps completed: {step_count}/{len(steps)}")
+            logger.info(f"Duration: {duration:.2f}s")
+            
+            if failed_steps:
+                logger.warning(f"Failed steps: {', '.join(failed_steps)}")
+                status = 'partial'
+            else:
+                logger.info(f"✅ All steps completed successfully!")
+                status = 'completed'
+            
+            # Get all results
+            all_results = executor.get_all_results()
+            logger.info(f"Stored results: {', '.join(all_results.keys())}")
+            
+            # Mark as complete
+            self.state_manager.end_execution(
+                execution_id, status, duration
+            )
+            
+            logger.info(f"{'='*60}\n")
+            
+            return {
+                'success': len(failed_steps) == 0,
+                'steps_completed': step_count,
+                'total_steps': len(steps),
+                'failed_steps': failed_steps,
+                'results': all_results,
+                'duration': duration
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during execution (v2): {e}", exc_info=True)
+            duration = time.time() - start_time
+            self.state_manager.end_execution(
+                execution_id, 'error', duration, str(e)
+            )
+            return {
+                'success': False,
+                'error': str(e),
+                'duration': duration
+            }
+    
+    def run_once(self, use_v2=False):
         """Run all enabled instructions once."""
         logger.info("Running all enabled instructions once...")
+        
+        if use_v2:
+            logger.info("Using v2 step-by-step execution")
         
         instructions = self.instruction_loader.load_all()
         
         for instruction in instructions:
             if instruction.enabled:
-                self.execute_instruction(instruction.name)
+                if use_v2:
+                    # For v2, convert filename: strava_monitor.yaml -> strava_monitor_v2
+                    filename = Path(instruction.file_path).stem  # Get filename without extension
+                    v2_name = f"{filename}_v2"
+                    
+                    # Check if v2 version exists
+                    v2_path = Path("instructions") / f"{v2_name}.yaml"
+                    if v2_path.exists():
+                        logger.info(f"Found v2 instruction: {v2_name}")
+                        self.execute_instruction_v2(v2_name)
+                    else:
+                        logger.warning(f"V2 instruction not found for {instruction.name} ({v2_name}.yaml), skipping")
+                else:
+                    self.execute_instruction(instruction.name)
         
         logger.info("One-time execution complete!")
     
@@ -340,6 +489,11 @@ def main():
         '--instruction',
         help='Run specific instruction only'
     )
+    parser.add_argument(
+        '--v2',
+        action='store_true',
+        help='Use v2 step-by-step execution (better for small models)'
+    )
     
     args = parser.parse_args()
     
@@ -354,10 +508,14 @@ def main():
     # Run based on mode
     if args.instruction:
         # Run specific instruction
-        agent.execute_instruction(args.instruction)
+        if args.v2:
+            logger.info("Using v2 step-by-step execution")
+            agent.execute_instruction_v2(args.instruction)
+        else:
+            agent.execute_instruction(args.instruction)
     elif args.once:
         # Run all instructions once
-        agent.run_once()
+        agent.run_once(use_v2=args.v2)
     else:
         # Start scheduler
         agent.start_scheduler()

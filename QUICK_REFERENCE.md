@@ -49,6 +49,40 @@ print('✅ Valid' if result.get('success') else '❌ Invalid')
 ./ask.sh "Get dashboard feed from last 24 hours"
 ```
 
+---
+
+## 🚀 Agent Execution
+
+### V1 Execution (Old - Multi-iteration)
+```bash
+./start-agent.sh --instruction strava_monitor
+```
+
+### V2 Execution (New - Step-by-step, better for small models)
+```bash
+./start-agent.sh --instruction strava_monitor_v2 --v2
+```
+
+### Run Once vs Scheduler
+```bash
+# Run all instructions once with V2
+./start-agent.sh --once --v2
+
+# Run specific instruction with V2
+./start-agent.sh --instruction strava_monitor_v2 --v2
+
+# Start scheduler (continuous - V1 only for now)
+./start-agent.sh
+```
+
+**Note:** When using `--once --v2`, it automatically looks for `_v2` versions of instructions.
+
+**Benefits of V2:**
+- ✅ Fresh LLM context per step
+- ✅ Works great with small models (llama3.2:3b)
+- ✅ Clear logging for each step
+- ✅ Better debugging
+
 ### Advanced Queries (Better with larger model)
 ```bash
 # These work but may need llama3.1:8b
