@@ -200,7 +200,20 @@ class AIAgent:
                 logger.info(answer)
             else:
                 logger.info("Output:")
-                logger.info(result.get('final', str(result.get('results', 'No output'))))
+                # Extract clean output
+                final = result.get('final', result.get('results', 'No output'))
+                
+                # For simple questions, show clean answer
+                if isinstance(final, dict):
+                    # Check if it's a simple count/answer result
+                    if 'answer' in final:
+                        logger.info(final['answer'])
+                    elif 'count' in final and len(final) <= 3:  # Simple count result
+                        logger.info(final['count'])
+                    else:
+                        logger.info(final)
+                else:
+                    logger.info(final)
             
             logger.info("============================================================")
             

@@ -643,16 +643,37 @@ If none relevant, output:
         
         # No suitable tool found, need to decompose
         # Use LLM to decompose into ATOMIC sub-tasks
+        # CRITICAL: Show what data is already available to avoid "fetch" tasks
+        context_summary = ""
+        if self.context:
+            available_keys = [k for k in self.context.keys() if not k.startswith('_')]
+            if available_keys:
+                context_summary = f"\n\nData already in context (DON'T create 'fetch' tasks for these):\n"
+                for key in available_keys[:5]:  # Show first 5
+                    value = self.context[key]
+                    if isinstance(value, dict):
+                        if '_ref_id' in value:
+                            context_summary += f"  - {key}: Large data (already loaded)\n"
+                        elif 'unix_timestamp' in value:
+                            context_summary += f"  - {key}: Timestamp = {value.get('unix_timestamp')}\n"
+                        elif 'result' in value:
+                            context_summary += f"  - {key}: Result already computed\n"
+                        else:
+                            context_summary += f"  - {key}: Data available\n"
+        
         prompt = f"""Break this into ATOMIC sub-tasks that each call ONE tool.
 
 Task: {neuron_desc}
-
-IMPORTANT: Each sub-task must be ONE tool call (e.g., "Call dateToUnixTimestamp for January 1").
-Do NOT create tasks like "Parse January" - that's not a tool call.
+{context_summary}
+IMPORTANT Rules:
+1. Each sub-task must be ONE specific tool call (e.g., "Call dateToUnixTimestamp for January 1").
+2. Do NOT create "fetch" or "get result" tasks for data that's already in context!
+3. Do NOT create tasks like "Parse January" or "Extract value" - those aren't tool calls.
+4. If data is already available in context, the sub-task should USE it, not fetch it.
 
 If this can be done with a SINGLE tool call, output "SINGLE_TASK".
 
-Output (numbered list of tool calls, or SINGLE_TASK):"""
+Output (numbered list of specific tool calls, or SINGLE_TASK):"""
         
         response = self.ollama.generate(
             prompt,
@@ -1289,14 +1310,24 @@ Output ONLY the clarified task description (rewrite the sub-task with EXACT fiel
                         else:
                             context_info += f"\n  ✅ {key}: Result = {result_data}"
                             context_info += f"\n     → To use as parameter: Use this value directly"
+                    elif 'success' in value:
+                        # This is a SCALAR result (no 'result' field, but has direct values like unix_timestamp)
+                        # Extract key fields to show
+                        key_fields = {k: v for k, v in value.items() if k != 'success' and k != 'input'}
+                        context_info += f"\n  📊 {key}: SCALAR RESULT - {key_fields}"
+                        context_info += f"\n     → NOT a data reference! Use values directly: data['{key}']['unix_timestamp']"
+                        context_info += f"\n     → ⚠️ WARNING: NO '_ref_id' field! This is NOT disk data!"
+                        context_info += f"\n     → ❌ DO NOT try: load_data_reference(data['{key}']['_ref_id']) - will fail!"
                     else:
                         context_info += f"\n  📋 {key}: {self._summarize_result(value)}"
             
             context_info += "\n\nHOW TO USE CONTEXT DATA:"
-            context_info += "\n  - If tool needs 'entries' parameter and neuron_0_2 shows DATA → copy that data AS-IS (keep field names unchanged)"
-            context_info += "\n  - If tool needs 'activity_id' and neuron_0_1 has activities → extract from shown data"
-            context_info += "\n  - IMPORTANT: Use the ACTUAL DATA shown above, not references to context keys"
-            context_info += "\n  - CRITICAL: Do NOT rename fields when copying data! Keep original field names (e.g., 'start_date' not 'timestamp')"
+            context_info += "\n  - CRITICAL: ONLY use context keys that are listed above! Don't invent keys that don't exist!"
+            context_info += "\n  - If you need data that's not in context, the tool will fail. That's OK - describe what you need."
+            context_info += "\n  - If tool needs 'entries' parameter and context shows DATA → copy that data AS-IS (keep field names unchanged)"
+            context_info += "\n  - For scalar results (📊), access fields directly: data['neuron_X_Y']['unix_timestamp']"
+            context_info += "\n  - For disk data (📦), use: data['neuron_X_Y']['_ref_id'] then load_data_reference(...)"
+            context_info += "\n  - NEVER try to load_data_reference on scalar results - they have NO _ref_id!"
         
         prompt = """Extract parameters from the task description and available data.
 
@@ -1308,13 +1339,16 @@ Parameters needed:
 {context_info}
 
 CRITICAL RULES FOR PARAMETER EXTRACTION:
+0. **CRITICAL**: ONLY use context keys listed in "CONTEXT KEYS AVAILABLE" above! 
+   - If you try to use a key that doesn't exist (e.g., data['neuron_0_2'] when only neuron_1_1 exists), you will get KeyError!
+   - Check the list carefully and ONLY use keys that are actually shown!
 1. If parameters are already auto-mapped (shown above), include them in your output
 2. For remaining REQUIRED parameters - extract from task description or context data
 3. ONLY use parameters that this tool actually accepts (check parameter list above)
 4. IMPORTANT: Check "CONTEXT KEYS AVAILABLE" - previous neurons have produced data you can use!
-   - If tool needs 'entries' and you see "neuron_0_2: Result = [...]" → use that result AS-IS
-   - If tool needs list data and neuron_0_X has it → extract neuron_0_X['result']
-   - DO NOT rename fields! If data has 'start_date', keep it as 'start_date' (don't rename to 'timestamp')
+   - 📦 (LARGE DATA): Has '_ref_id' → use load_data_reference(data['key']['_ref_id'])
+   - 📊 (SCALAR RESULT): NO '_ref_id' → access fields directly like data['key']['unix_timestamp']
+   - ✅ (RESULT): Has 'result' field → access as data['key']['result']
 5. For mergeTimeseriesState specifically:
    - Copy 'entries' data with original field names unchanged
    - Set 'timestamp_field' to match the actual field name in the data (e.g., 'start_date' not 'timestamp')
@@ -1726,16 +1760,39 @@ Provide a brief summary (2-3 sentences):"""
         """Truncate large results to keep logs readable."""
         import json
         
+        # Convert any Neuron objects to dicts first
+        serializable_results = []
+        for result in results:
+            if hasattr(result, '__dict__'):  # Neuron or other objects
+                # Convert to basic dict, excluding complex nested objects
+                result_dict = {}
+                for key, value in result.__dict__.items():
+                    if isinstance(value, (str, int, float, bool, type(None))):
+                        result_dict[key] = value
+                    elif isinstance(value, dict):
+                        result_dict[key] = "[dict]"
+                    elif isinstance(value, list):
+                        result_dict[key] = f"[list with {len(value)} items]"
+                    else:
+                        result_dict[key] = str(type(value).__name__)
+                serializable_results.append(result_dict)
+            else:
+                serializable_results.append(result)
+        
         # Check total size
-        results_json = json.dumps(results)
-        size_kb = len(results_json) / 1024
+        try:
+            results_json = json.dumps(serializable_results)
+            size_kb = len(results_json) / 1024
+        except (TypeError, ValueError):
+            # If still not serializable, just return simplified version
+            return [{"info": "Result truncated - could not serialize"}]
         
         if size_kb <= max_size_kb:
-            return results  # Small enough, keep as-is
+            return serializable_results  # Small enough, keep as-is
         
         # Truncate each result
         truncated = []
-        for result in results:
+        for result in serializable_results:
             if isinstance(result, dict):
                 # Keep metadata but truncate large data fields
                 truncated_result = {}
