@@ -23,9 +23,16 @@ class StravaClient:
     """
     Client for Strava using both web frontend API (cookie-based) and official API v3 (token-based).
     
-    Supports dual authentication:
-    - Cookies (.strava_cookies) for web frontend endpoints
-    - Bearer token (.strava_token) for official API v3 endpoints
+    REQUIRES BOTH authentication methods for full functionality:
+    - Cookies (.strava_cookies) for web frontend endpoints:
+      * getDashboardFeed (friends' activity feed)
+      * getActivityKudos (who gave kudos)
+      * updateActivity (modify activity details)
+    - Bearer token (.strava_token) for official API v3 endpoints:
+      * getMyActivities (your activities with detailed stats)
+    
+    Most queries need BOTH! For example:
+    "Get my September activities and who gave kudos" needs token (activities) + cookies (kudos)
     """
     
     def __init__(self, cookies_file: str = ".strava_cookies", token_file: str = ".strava_token"):
@@ -60,11 +67,13 @@ class StravaClient:
         
     def _load_cookies(self):
         """
-        Load cookies from file.
+        Load cookies from file. REQUIRED for web frontend endpoints (kudos, dashboard, updates).
         
         Supports two formats:
         1. JSON array: [{"name": "...", "value": "...", "domain": "..."}]
         2. Raw cookie string: "key1=value1; key2=value2; ..."
+        
+        Both formats are supported - use whichever is easier to export from your browser.
         """
         cookies_path = Path(self.cookies_file)
         if not cookies_path.exists():

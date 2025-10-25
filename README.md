@@ -103,6 +103,24 @@ Built for autonomous Strava activity monitoring, but the architecture is general
 
 **Could be adapted for**: Any REST API automation, data pipelines, research workflows, personal assistants.
 
+---
+
+## 📖 Documentation
+
+Complete guides to get you started:
+
+- **[📦 Setup Guide](docs/SETUP.md)** - Installation, Strava auth, GPU setup, model selection
+- **[🏗️ Architecture](docs/ARCHITECTURE.md)** - How the neuron system works (micro-prompts, dendrites, data compaction)
+- **[🚀 Usage Guide](docs/USAGE.md)** - Running goals, examples, extending tools, troubleshooting
+
+**Quick Links:**
+- [Strava Token Setup](docs/SETUP.md#strava-api-authentication-setup) - Get your API credentials
+- [First Goal](docs/USAGE.md#running-goals) - Run your first natural language query
+- [Adding Tools](docs/USAGE.md#extending-dendrite) - Extend with new APIs
+- [Troubleshooting](docs/SETUP.md#troubleshooting) - Common issues and solutions
+
+---
+
 ## Prerequisites
 
 - Docker Engine 20.10+ 
@@ -158,6 +176,8 @@ Built for autonomous Strava activity monitoring, but the architecture is general
    - Wait for the API to be ready
    - Pull the default model (llama3.1:8b)
    - Display status and usage information
+
+**→ Next Steps:** See **[Complete Setup Guide](docs/SETUP.md)** for Strava authentication, GPU setup, and model selection.
 
 ## Configuration
 

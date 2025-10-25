@@ -293,18 +293,19 @@ Then use in goals:
 ./start-agent.sh --goal "Analyze my workout trends"
 ```
 
-## Token Management
+## Authentication Management
 
-### Manual Refresh
+### Token Refresh (API Token)
 
+The API token (`.strava_token`) expires after 6 hours.
+
+**Manual refresh:**
 ```bash
-# Refresh Strava token
 ./scripts/refresh_token.sh
 ```
 
-### Automatic Refresh
-
-The agent automatically refreshes tokens when:
+**Automatic refresh:**
+The agent automatically refreshes when:
 - API returns 401 Unauthorized
 - Token expires_at timestamp is reached
 - Before long-running tasks
@@ -317,6 +318,30 @@ Token file format (`.strava_token`):
   "expires_at": 1698765432
 }
 ```
+
+### Cookie Refresh (Session Cookies)
+
+Session cookies (`.strava_cookies`) expire when you log out of Strava.
+
+**Symptoms of expired cookies:**
+- `getDashboardFeed` returns empty or errors
+- `getActivityKudos` fails with 401/403
+- `updateActivity` fails
+
+**Solution:** Re-export cookies from browser (see [SETUP.md](SETUP.md))
+
+### Authentication Troubleshooting
+
+**"No activities found" but you have activities:**
+- Check `.strava_token` exists and is valid
+- Try: `./scripts/refresh_token.sh`
+
+**"No kudos found" but activity has kudos:**
+- Check `.strava_cookies` exists
+- Re-export cookies from browser (they may have expired)
+
+**Both files required for most queries!**
+- "Get my activities with kudos" needs BOTH token (activities) and cookies (kudos)
 
 ## Best Practices
 

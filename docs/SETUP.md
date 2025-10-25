@@ -41,14 +41,23 @@ This will:
 
 If you want to use Strava integration:
 
-## Strava API Token Setup
+## Strava API Authentication Setup
 
-The agent uses **dual authentication** for Strava:
+The agent requires **BOTH authentication methods** for full functionality:
 
-1. **Cookies** (`.strava_cookies`) - For web frontend features (dashboard feed, kudos)
-2. **API Token** (`.strava_token`) - For official API v3 (your activities, detailed stats)
+1. **API Token** (`.strava_token`) - For official API v3 endpoints
+   - Required for: `getMyActivities` (fetch your own activities with detailed stats)
+   - Uses: Bearer token authentication
 
-### Getting Your API Token
+2. **Session Cookies** (`.strava_cookies`) - For web frontend endpoints  
+   - Required for: `getDashboardFeed` (friends' feed), `getActivityKudos` (kudos details), `updateActivity`
+   - Uses: Cookie-based authentication with CSRF tokens
+
+**Important:** Most queries need BOTH files! For example, "Get my activities and who gave kudos" requires the token (to fetch activities) AND cookies (to fetch kudos per activity).
+
+### Getting Your API Token (Required for getMyActivities)
+
+The API token is required for fetching your own activities with detailed stats.
 
 #### Quick Method (Testing/Personal Use):
 
@@ -88,13 +97,70 @@ Use the provided script:
 ./scripts/get_strava_token.sh
 ```
 
+### Getting Your Session Cookies (Required for kudos, dashboard, updates)
+
+Session cookies are required for web frontend endpoints (kudos details, friends' feed, activity updates).
+
+#### Method 1: Browser DevTools (Easiest)
+
+1. **Log into Strava** in your browser
+2. **Open DevTools**: F12 or Right-click → Inspect
+3. **Go to Network tab**
+4. **Reload** the page (Ctrl+R / Cmd+R)
+5. **Click any request** to strava.com
+6. **Find "Cookie" header** in Request Headers
+7. **Copy the entire cookie string**
+
+Example cookie string:
+```
+_strava4_session=abc123...; CloudFront-Key-Pair-Id=xyz...
+```
+
+8. **Save to file:**
+
+**Option A: Raw String Format** (simpler):
+```bash
+echo "_strava4_session=abc123...; CloudFront-Key-Pair-Id=xyz..." > .strava_cookies
+```
+
+**Option B: JSON Format** (more structured):
+```bash
+cat > .strava_cookies << 'EOF'
+[
+  {"name": "_strava4_session", "value": "abc123...", "domain": ".strava.com"},
+  {"name": "CloudFront-Key-Pair-Id", "value": "xyz...", "domain": ".strava.com"}
+]
+EOF
+```
+
+**Both formats work!** The code automatically detects which format you use.
+
+#### Method 2: Browser Extension
+
+Use a cookie export extension (e.g., "EditThisCookie", "Cookie-Editor"):
+1. Export Strava cookies as JSON
+2. Save to `.strava_cookies`
+
+**Important:** Cookies expire when you log out of Strava. If tools stop working, re-export cookies.
+
 ### Token Refresh
 
-Tokens expire after 6 hours. The agent automatically refreshes them when needed.
+API tokens expire after 6 hours. The agent automatically refreshes them when needed.
 
 Manual refresh:
 ```bash
 ./scripts/refresh_token.sh
+```
+
+### Quick Test
+
+Test if authentication is working:
+```bash
+# Test API token
+./start-agent.sh --goal "How many activities this month?"
+
+# Test cookies
+./start-agent.sh --goal "Who gave me kudos today?"
 ```
 
 ## Model Selection
