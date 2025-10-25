@@ -1,0 +1,10 @@
+goal: "Count how many Run activities I have in my last 30 activities. Just report the number."
+
+constraints:
+  - "Use getMyActivities to fetch activities"
+  - "Use executeDataAnalysis to count Runs (sport_type='Run')"
+  - "Report the count"
+
+outcome:
+  type: "report"
+  format: "Just say: 'You have X Run activities'"

@@ -336,6 +336,364 @@ def listStateKeys() -> Dict[str, Any]:
         }
 
 
+@tool(
+    description="Merge time-stamped entries into state with automatic deduplication. Perfect for accumulating kudos, activities, or any time-series data across multiple runs.",
+    parameters=[
+        {"name": "key", "type": "string", "description": "State key (e.g., 'kudos_timeseries', 'activities_timeseries')", "required": True},
+        {"name": "entries", "type": "array", "description": "List of entries to merge. Each must have an 'id' field (for deduplication) and 'timestamp' field (ISO format)", "required": True},
+        {"name": "id_field", "type": "string", "description": "Field name for unique ID (default: 'id')", "required": False},
+        {"name": "timestamp_field", "type": "string", "description": "Field name for timestamp (default: 'timestamp')", "required": False}
+    ],
+    returns="Merge statistics: added count, duplicates avoided, total entries",
+    permissions="write"
+)
+def mergeTimeseriesState(key: str, entries: List[Dict], id_field: str = "id", timestamp_field: str = "timestamp") -> Dict[str, Any]:
+    """
+    Merge new time-stamped entries into existing timeseries state.
+    
+    Automatically deduplicates by ID field, keeping the entry with the newest timestamp.
+    Perfect for accumulating data over time without duplicates.
+    
+    Use cases:
+    - Accumulate kudos from multiple "last 24h" queries
+    - Build up activity history incrementally
+    - Collect comments over time
+    
+    Args:
+        key: State key to store under (e.g., 'kudos_timeseries')
+        entries: List of dicts, each must have id_field and timestamp_field
+        id_field: Name of field containing unique ID (default: 'id')
+        timestamp_field: Name of field containing ISO timestamp (default: 'timestamp')
+    
+    Returns:
+        dict: Statistics about the merge operation
+        
+    Example:
+        # First run - save 15 kudos
+        mergeTimeseriesState(
+            key="kudos_timeseries",
+            entries=[
+                {"id": "kudos_123_456", "timestamp": "2025-10-25T10:00:00Z", "athlete": "Alice"},
+                {"id": "kudos_124_789", "timestamp": "2025-10-25T09:00:00Z", "athlete": "Bob"},
+                # ... 13 more
+            ]
+        )
+        # Result: {"added": 15, "duplicates": 0, "total_count": 15}
+        
+        # Second run (1 hour later) - same query fetches 17 kudos (15 old + 2 new)
+        mergeTimeseriesState(
+            key="kudos_timeseries",
+            entries=[...17 kudos including the original 15...]
+        )
+        # Result: {"added": 2, "duplicates": 15, "total_count": 17}
+        # No duplicates stored! Only 2 new kudos added.
+    """
+    try:
+        if not entries:
+            return {
+                "success": True,
+                "added": 0,
+                "duplicates": 0,
+                "total_count": 0,
+                "message": "No entries to merge"
+            }
+        
+        # Validate entries have required fields
+        for entry in entries:
+            if id_field not in entry:
+                return {
+                    "success": False,
+                    "error": f"Entry missing required field '{id_field}': {entry}"
+                }
+            if timestamp_field not in entry:
+                return {
+                    "success": False,
+                    "error": f"Entry missing required field '{timestamp_field}': {entry}"
+                }
+        
+        # 1. Load existing state
+        state_result = loadState(key)
+        
+        if state_result.get('success') and state_result.get('found'):
+            existing = state_result['value']
+        else:
+            # Initialize new timeseries state
+            existing = {
+                "entity": key.replace("_timeseries", ""),
+                "accumulated_since": None,
+                "last_updated": None,
+                "count": 0,
+                "entries": [],
+                "metadata": {
+                    "total_api_calls": 0,
+                    "total_fetched": 0,
+                    "duplicates_avoided": 0
+                }
+            }
+        
+        # 2. Build lookup by ID
+        entries_by_id = {e[id_field]: e for e in existing.get("entries", [])}
+        original_count = len(entries_by_id)
+        
+        # 3. Merge new entries (keep entry with newest timestamp)
+        duplicates = 0
+        added = 0
+        
+        for new_entry in entries:
+            entry_id = new_entry[id_field]
+            
+            if entry_id in entries_by_id:
+                # Duplicate - keep newest timestamp
+                old_ts = entries_by_id[entry_id][timestamp_field]
+                new_ts = new_entry[timestamp_field]
+                
+                # Compare timestamps (handle both ISO strings and already parsed)
+                if isinstance(old_ts, str):
+                    old_dt = datetime.fromisoformat(old_ts.replace('Z', '+00:00'))
+                else:
+                    old_dt = old_ts
+                    
+                if isinstance(new_ts, str):
+                    new_dt = datetime.fromisoformat(new_ts.replace('Z', '+00:00'))
+                else:
+                    new_dt = new_ts
+                
+                if new_dt > old_dt:
+                    entries_by_id[entry_id] = new_entry
+                    
+                duplicates += 1
+            else:
+                # New entry
+                entries_by_id[entry_id] = new_entry
+                added += 1
+        
+        # 4. Update metadata
+        now = datetime.now(timezone.utc).isoformat()
+        
+        merged = {
+            "entity": existing.get("entity", key.replace("_timeseries", "")),
+            "accumulated_since": existing.get("accumulated_since") or now,
+            "last_updated": now,
+            "count": len(entries_by_id),
+            "entries": sorted(
+                entries_by_id.values(),
+                key=lambda e: e[timestamp_field],
+                reverse=True  # Newest first
+            ),
+            "metadata": {
+                "total_api_calls": existing.get("metadata", {}).get("total_api_calls", 0) + 1,
+                "total_fetched": existing.get("metadata", {}).get("total_fetched", 0) + len(entries),
+                "duplicates_avoided": existing.get("metadata", {}).get("duplicates_avoided", 0) + duplicates
+            }
+        }
+        
+        # 5. Save back to state
+        saveState(key, merged)
+        
+        logger.info(f"📊 Merged timeseries '{key}': +{added} new, {duplicates} duplicates avoided, {len(entries_by_id)} total")
+        
+        return {
+            "success": True,
+            "added": added,
+            "duplicates": duplicates,
+            "total_count": len(entries_by_id),
+            "message": f"Added {added} new entries, avoided {duplicates} duplicates"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to merge timeseries state for {key}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "added": 0,
+            "duplicates": 0,
+            "total_count": 0
+        }
+
+
+@tool(
+    description="Query time-ranged data from timeseries state. Checks if we have data for the requested range, avoiding unnecessary API calls.",
+    parameters=[
+        {"name": "key", "type": "string", "description": "State key to query (e.g., 'kudos_timeseries')", "required": True},
+        {"name": "start_time", "type": "string", "description": "Start of time range (ISO format, e.g., '2025-10-24T10:00:00Z')", "required": True},
+        {"name": "end_time", "type": "string", "description": "End of time range (ISO format, e.g., '2025-10-25T10:00:00Z')", "required": True},
+        {"name": "timestamp_field", "type": "string", "description": "Field name for timestamp comparison (default: 'timestamp')", "required": False}
+    ],
+    returns="Filtered entries within time range + coverage analysis (full/partial/none)",
+    permissions="read"
+)
+def queryTimeseriesState(key: str, start_time: str, end_time: str, timestamp_field: str = "timestamp") -> Dict[str, Any]:
+    """
+    Query timeseries state for entries within a time range.
+    
+    Returns filtered entries AND coverage analysis to help decide if API call is needed.
+    
+    Coverage types:
+    - "full": All requested data is in state, no API call needed
+    - "partial": Some data in state, but missing older entries (need API for gaps)
+    - "none": No data in state for this range, API call required
+    
+    Args:
+        key: State key to query
+        start_time: Start timestamp (ISO format)
+        end_time: End timestamp (ISO format)
+        timestamp_field: Field name containing timestamp (default: 'timestamp')
+    
+    Returns:
+        dict: Filtered entries + coverage info
+        
+    Example:
+        # Query last 2 days of kudos
+        result = queryTimeseriesState(
+            key="kudos_timeseries",
+            start_time="2025-10-23T10:00:00Z",
+            end_time="2025-10-25T10:00:00Z"
+        )
+        
+        if result['coverage'] == 'full':
+            # Use result['entries'] directly, no API call!
+            return format_kudos(result['entries'])
+        else:
+            # Need to fetch from API
+            api_data = fetch_kudos_from_strava(...)
+            # Then merge: mergeTimeseriesState(...)
+    """
+    try:
+        # 1. Load state
+        state_result = loadState(key)
+        
+        if not state_result.get('success') or not state_result.get('found'):
+            return {
+                "success": True,
+                "entries": [],
+                "count": 0,
+                "coverage": "none",
+                "needs_api_call": True,
+                "reason": "No data in state - first time query",
+                "state_range": None
+            }
+        
+        state = state_result['value']
+        
+        if not state.get("entries"):
+            return {
+                "success": True,
+                "entries": [],
+                "count": 0,
+                "coverage": "none",
+                "needs_api_call": True,
+                "reason": "State exists but empty",
+                "state_range": None
+            }
+        
+        # 2. Parse time range
+        start = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        end = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        
+        # 3. Filter by time range
+        filtered = []
+        for entry in state["entries"]:
+            entry_ts = entry.get(timestamp_field)
+            if not entry_ts:
+                continue
+                
+            if isinstance(entry_ts, str):
+                entry_dt = datetime.fromisoformat(entry_ts.replace('Z', '+00:00'))
+            else:
+                entry_dt = entry_ts
+            
+            if start <= entry_dt <= end:
+                filtered.append(entry)
+        
+        # 4. Analyze coverage
+        if not filtered:
+            coverage = "none"
+            needs_api = True
+            reason = "No entries in requested range"
+        else:
+            # Check if we have continuous coverage
+            # Find oldest entry in entire state
+            oldest_in_state = None
+            newest_in_state = None
+            
+            for entry in state["entries"]:
+                entry_ts = entry.get(timestamp_field)
+                if not entry_ts:
+                    continue
+                    
+                if isinstance(entry_ts, str):
+                    entry_dt = datetime.fromisoformat(entry_ts.replace('Z', '+00:00'))
+                else:
+                    entry_dt = entry_ts
+                
+                if oldest_in_state is None or entry_dt < oldest_in_state:
+                    oldest_in_state = entry_dt
+                if newest_in_state is None or entry_dt > newest_in_state:
+                    newest_in_state = entry_dt
+            
+            # Check if state covers our requested range
+            if oldest_in_state and oldest_in_state <= start and newest_in_state and newest_in_state >= end:
+                coverage = "full"
+                needs_api = False
+                reason = "Complete coverage from state - no API call needed! 🎉"
+            else:
+                coverage = "partial"
+                needs_api = True
+                if oldest_in_state and oldest_in_state > start:
+                    reason = f"State only goes back to {oldest_in_state.isoformat()}, need API for older data"
+                elif newest_in_state and newest_in_state < end:
+                    reason = f"State only goes up to {newest_in_state.isoformat()}, need API for newer data"
+                else:
+                    reason = "Partial coverage - may have gaps in requested range"
+        
+        # 5. Build state range info
+        state_range = None
+        if state.get("entries"):
+            timestamps = []
+            for entry in state["entries"]:
+                entry_ts = entry.get(timestamp_field)
+                if entry_ts:
+                    if isinstance(entry_ts, str):
+                        timestamps.append(datetime.fromisoformat(entry_ts.replace('Z', '+00:00')))
+                    else:
+                        timestamps.append(entry_ts)
+            
+            if timestamps:
+                state_range = {
+                    "oldest": min(timestamps).isoformat(),
+                    "newest": max(timestamps).isoformat(),
+                    "total_entries": len(state["entries"])
+                }
+        
+        logger.info(f"📊 Query '{key}': {len(filtered)} entries, coverage={coverage}")
+        
+        return {
+            "success": True,
+            "entries": filtered,
+            "count": len(filtered),
+            "coverage": coverage,
+            "needs_api_call": needs_api,
+            "reason": reason,
+            "state_range": state_range,
+            "requested_range": {
+                "start": start_time,
+                "end": end_time
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to query timeseries state for {key}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "entries": [],
+            "count": 0,
+            "coverage": "none",
+            "needs_api_call": True,
+            "reason": f"Error: {str(e)}"
+        }
+
+
 # =============================================================================
 # DATE/TIME UTILITIES - Critical for preventing timestamp hallucination
 # =============================================================================

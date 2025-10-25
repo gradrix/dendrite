@@ -1,0 +1,88 @@
+goal: |
+  Test timeseries state accumulation with REAL kudos data from Strava.
+  
+  OBJECTIVE: Fetch your recent activities, get who gave kudos on each, and accumulate into timeseries state.
+  
+  CRITICAL DATA STRUCTURE - Each entry MUST have these exact fields:
+  {
+    "id": "kudos_{activity_id}_{athlete_id}",  # Unique composite key
+    "timestamp": "2025-10-24T16:37:47Z",        # Activity start_date
+    "activity_id": "16243765823",               # Strava activity ID
+    "activity_name": "Evening Run",             # Activity name
+    "activity_type": "Run",                     # Activity type
+    "activity_distance": 10000.5,               # Distance in meters
+    "athlete_id": "88565031",                   # Who gave kudos
+    "athlete_name": "John Doe",                 # Their name
+    "kudos_count_total": 5                      # Total kudos on activity
+  }
+  
+  STEP-BY-STEP PROCESS:
+  
+  1. Call getMyActivities with per_page=5 to get your 5 most recent activities
+     - Extract: id, name, type, start_date, distance, kudos_count
+  
+  2. For EACH activity that has kudos_count > 0:
+     - Call get_activity_kudos(activity_id) to get list of athletes who gave kudos
+     - This returns: [{"athlete_id": "...", "athlete_name": "...first last"}, ...]
+  
+  3. Build entries array by combining activity data + kudos givers:
+     entries = []
+     for activity in activities:
+         if activity.kudos_count > 0:
+             kudos_givers = get_activity_kudos(activity.id)
+             for kudo_giver in kudos_givers:
+                 entry = {
+                     "id": f"kudos_{activity.id}_{kudo_giver.athlete_id}",
+                     "timestamp": activity.start_date,
+                     "activity_id": str(activity.id),
+                     "activity_name": activity.name,
+                     "activity_type": activity.type,
+                     "activity_distance": activity.distance,
+                     "athlete_id": str(kudo_giver.athlete_id),
+                     "athlete_name": kudo_giver.athlete_name,
+                     "kudos_count_total": activity.kudos_count
+                 }
+                 entries.append(entry)
+  
+  4. Call mergeTimeseriesState:
+     mergeTimeseriesState(
+         key="kudos_timeseries",
+         entries=entries,
+         id_field="id",
+         timestamp_field="timestamp"
+     )
+  
+  5. Report results:
+     - How many activities fetched
+     - How many had kudos
+     - Total kudos entries created
+     - Result from mergeTimeseriesState (added, duplicates, total_count)
+  
+  CRITICAL REQUIREMENTS:
+  - Use "id" not "activity_id" as the unique identifier field
+  - The id must be composite: "kudos_{activity_id}_{athlete_id}"
+  - Include ALL context fields so data is useful across sessions
+  - Handle case where activity has 0 kudos (skip it)
+  - Handle case where get_activity_kudos returns empty list
+  
+  SUCCESS CRITERIA:
+  - State key "kudos_timeseries" contains entries with rich context
+  - Each entry can answer: who, when, which activity, what type
+  - Can query: "Who gave me kudos in last 3 days?"
+  - Can query: "Which runs got kudos this week?"
+  - Can query: "Did athlete X give me kudos recently?"
+
+constraints:
+  - Must use getMyActivities (not getDashboard - that's friends' activities)
+  - Must call get_activity_kudos for each activity
+  - Must NOT spawn sub-neurons - do everything in main neuron
+  - Field names must match EXACTLY as specified
+  - ID format must be "kudos_{activity_id}_{athlete_id}"
+
+expected_outcome: |
+  Successfully accumulated kudos data with full context into timeseries state.
+  State inspection shows entries with:
+  - Activity details (name, type, distance)
+  - Athlete details (who gave kudos)
+  - Timestamps for time-based queries
+  - Composite IDs for deduplication

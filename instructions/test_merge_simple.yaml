@@ -1,0 +1,22 @@
+# Super Simple mergeTimeseriesState Test
+# 
+# Direct tool call with hardcoded data to verify the tool works
+
+goal: |
+  Test mergeTimeseriesState tool with simple hardcoded data.
+  
+  Call mergeTimeseriesState with exactly these parameters:
+  
+  key: "test_kudos"
+  entries: [
+    {"id": "kudos_001", "timestamp": "2025-10-25T10:00:00Z", "name": "Alice", "count": 5},
+    {"id": "kudos_002", "timestamp": "2025-10-25T11:00:00Z", "name": "Bob", "count": 3}
+  ]
+  id_field: "id"
+  timestamp_field: "timestamp"
+  
+  Report the result.
+
+expected_behavior: |
+  Should successfully merge 2 entries into state
+  Should return: added=2, duplicates=0, total_count=2

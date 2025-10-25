@@ -1,0 +1,54 @@
+# Test Timeseries State Accumulation
+# 
+# This test demonstrates the smart accumulation pattern:
+# 1. First run: Fetch kudos and save to timeseries
+# 2. Second run (simulate): Fetch again and merge (should deduplicate)
+# 3. Query: Ask for kudos from last 2 days (should use state if coverage is full)
+
+goal: |
+  Accumulate kudos data from my activities into timeseries state with deduplication.
+  
+  IMPORTANT CLARIFICATION:
+  "Last 24 hours kudos" means: "Activities from the last 24 hours that received kudos"
+  NOT "The 24 most recent kudos" or "Kudos given in last 24 hours"
+  
+  Steps:
+  1. Fetch my last 20 activities using getActivities tool
+  
+  2. For each activity that has kudos_count > 0:
+     - Extract: activity_id, start_date, kudos_count
+     - The start_date is when the ACTIVITY happened (this is our timestamp)
+  
+  3. Build entries list with these EXACT field names:
+     [
+       {
+         "id": "activity_15686553290",
+         "timestamp": "2025-09-03T18:03:17Z",
+         "activity_id": "15686553290",
+         "kudos_count": 4
+       }
+     ]
+     
+     CRITICAL: Field must be "id" not "activity_id" for the unique identifier!
+     Use "activity_{activity_id}" format for the id field.
+  
+  4. Call mergeTimeseriesState:
+     mergeTimeseriesState(
+       key="kudos_timeseries",
+       entries=<the list above>,
+       id_field="id",
+       timestamp_field="timestamp"
+     )
+  
+  5. Report: added, duplicates, total_count
+
+expected_behavior: |
+  - Should fetch activities successfully
+  - Should get kudos for each activity
+  - Should merge into timeseries state with deduplication
+  - Should report statistics (added, duplicates, total)
+  
+notes: |
+  Run this twice to see deduplication in action!
+  First run: All kudos are new
+  Second run: Should report duplicates avoided

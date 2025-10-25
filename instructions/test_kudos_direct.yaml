@@ -1,0 +1,50 @@
+goal: |
+  Accumulate kudos data from recent activities into timeseries state.
+  
+  DO NOT SPAWN NEURONS. DO EVERYTHING IN THIS MAIN NEURON.
+  
+  STEP 1: Call getMyActivities
+  - Tool: getMyActivities
+  - Param: per_page=3
+  - You will get a list of activities with kudos_count
+  
+  STEP 2: Build entries array IN THIS NEURON (no sub-neurons!)
+  - For each activity where kudos_count > 0:
+    - Create entry: {
+        "id": "activity_{activity.id}",
+        "timestamp": "{activity.start_date}",
+        "activity_id": "{activity.id}",
+        "activity_name": "{activity.name}",
+        "activity_type": "{activity.type}",
+        "kudos_count": {activity.kudos_count}
+      }
+  
+  STEP 3: Call mergeTimeseriesState IMMEDIATELY
+  - Tool: mergeTimeseriesState
+  - Params:
+      key: "kudos_timeseries"
+      entries: [the array you just built]
+  
+  EXAMPLE:
+  If getMyActivities returns:
+    [{"id": 123, "name": "Run", "type": "Run", "start_date": "2025-10-24T16:00:00Z", "kudos_count": 5}]
+  
+  Then call mergeTimeseriesState with:
+    entries: [{
+      "id": "activity_123",
+      "timestamp": "2025-10-24T16:00:00Z", 
+      "activity_id": "123",
+      "activity_name": "Run",
+      "activity_type": "Run",
+      "kudos_count": 5
+    }]
+
+constraints:
+  - NO SUB-NEURONS
+  - NO executeDataAnalysis
+  - Call getMyActivities → build array → call mergeTimeseriesState
+  - Do ALL work in main neuron
+
+expected_outcome: |
+  mergeTimeseriesState successfully called with activity data.
+  State contains entries with activity_id, activity_name, activity_type, kudos_count.

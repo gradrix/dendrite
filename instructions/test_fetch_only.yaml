@@ -1,0 +1,9 @@
+goal: |
+  Test if getMyActivities returns data correctly.
+
+constraints:
+  - Call getMyActivities with per_page=3
+  - Report how many activities returned
+
+expected_outcome: |
+  Number of activities fetched from Strava.

@@ -81,7 +81,83 @@ class NeuronAgent:
         self.config = config or {}
         self.context: Dict[str, Any] = {}
         self.execution_log: List[str] = []  # For debugging
+    
+    def _check_memory_relevance(self, goal: str) -> Dict[str, Any]:
+        """
+        Memory Overseer: Check if saved state is relevant to this goal.
         
+        Returns dict of {key: value} for relevant state, or empty dict if none.
+        
+        This prevents context bloat by only loading relevant memory.
+        """
+        try:
+            # 1. List all state keys (fast, no data loading yet)
+            keys_result = self.tools.call_tool('listStateKeys', {})
+            
+            if not keys_result.get('success') or not keys_result.get('keys'):
+                return {}
+            
+            state_keys = [k['key'] for k in keys_result['keys']]
+            
+            if not state_keys:
+                return {}
+            
+            # 2. Ask LLM which keys are relevant (tiny prompt!)
+            prompt = f"""Goal: "{goal}"
+
+Available memory keys: {', '.join(state_keys)}
+
+Which memory keys are relevant to this goal?
+
+Output ONLY valid JSON:
+{{"relevant_keys": ["key1", "key2"]}}
+
+If none relevant, output:
+{{"relevant_keys": []}}"""
+
+            response = self.ollama.generate(
+                prompt,
+                system="You identify relevant saved state keys. Output ONLY JSON, no explanation.",
+                temperature=0
+            )
+            
+            # 3. Parse response
+            try:
+                # Extract JSON from response
+                response_str = str(response).strip()
+                
+                # Try to find JSON in response
+                import re
+                json_match = re.search(r'\{[^}]*\}', response_str)
+                if json_match:
+                    decision = json.loads(json_match.group())
+                else:
+                    decision = json.loads(response_str)
+                    
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse memory relevance decision: {e}")
+                return {}
+            
+            relevant_keys = decision.get('relevant_keys', [])
+            
+            if not relevant_keys:
+                logger.info("🧠 Memory check: No relevant saved state")
+                return {}
+            
+            # 4. Load only relevant state
+            memory_context = {}
+            for key in relevant_keys:
+                result = self.tools.call_tool('loadState', {'key': key})
+                if result.get('success') and result.get('found'):
+                    memory_context[key] = result['value']
+                    logger.info(f"🧠 Loaded memory: {key} ({len(str(result['value']))} chars)")
+            
+            return memory_context
+            
+        except Exception as e:
+            logger.warning(f"Memory relevance check failed: {e}")
+            return {}
+    
     def execute_goal(self, goal: str, depth: int = 0) -> Dict[str, Any]:
         """
         Execute a goal through neuron chains.
@@ -99,6 +175,34 @@ class NeuronAgent:
         
         logger.info(f"{'  ' * depth}🎯 Goal (depth={depth}): {goal}")
         self._log(f"[DEPTH {depth}] Goal: {goal}")
+        
+        # Store original goal in context for inter-neuron communication (only at root)
+        if depth == 0:
+            self.context['_original_goal'] = goal
+        
+        # Memory Overseer: Check if we have relevant saved state (only at root level)
+        memory_context = {}
+        if depth == 0:
+            logger.info(f"{'  ' * depth}╭─ Memory Check")
+            memory_context = self._check_memory_relevance(goal)
+            
+            if memory_context:
+                # Inject memory into goal context
+                memory_summary = []
+                for key, value in memory_context.items():
+                    if isinstance(value, dict) and 'count' in value:
+                        memory_summary.append(f"- {key}: {value.get('count', 0)} entries")
+                    else:
+                        memory_summary.append(f"- {key}: {len(str(value))} chars")
+                
+                logger.info(f"{'  ' * depth}│  💾 Found relevant memory:")
+                for summary in memory_summary:
+                    logger.info(f"{'  ' * depth}│  {summary}")
+                
+                # Add to context so neurons can use it
+                self.context['_memory'] = memory_context
+            else:
+                logger.info(f"{'  ' * depth}│  ℹ️  No relevant memory found")
         
         # Neuron 1: Decompose goal into minimal neurons
         logger.info(f"{'  ' * depth}╭─ Decompose")
@@ -743,12 +847,24 @@ Output numbered list (1-4 steps, NO duplicates):"""
         Validate that Python code will correctly answer the task.
         Returns simplified/corrected code or None if validation fails.
         """
+        import ast
+        
+        # FIRST: Check Python syntax before asking LLM
+        try:
+            ast.parse(python_code)
+        except SyntaxError as e:
+            logger.warning(f"   │  │  ⚠️  Python syntax error detected: {e}")
+            return None  # Force regeneration with new code
+        
         # Get context summary for validation
         context_summary = []
         for key, value in context.items():
             if isinstance(value, dict):
                 if '_format' in value and value.get('_format') == 'disk_reference':
-                    context_summary.append(f"  {key}: Disk reference with summary: {value.get('summary', 'N/A')}")
+                    context_summary.append(f"  ✓ {key}: LARGE DATA - {value.get('summary', 'N/A')}")
+                    context_summary.append(f"     → Use: data['{key}']['_ref_id'] then load_data_reference(...)")
+                elif 'success' in value and 'result' in value:
+                    context_summary.append(f"  ✗ {key}: Scalar result = {value.get('result')} (NOT a data reference)")
                 else:
                     context_summary.append(f"  {key}: {self._summarize_result(value)}")
         
@@ -761,19 +877,29 @@ PYTHON CODE:
 {python_code}
 ```
 
-AVAILABLE CONTEXT:
+AVAILABLE CONTEXT KEYS:
 {chr(10).join(context_summary)}
 
+KEY GUIDE:
+✓ = Large data reference (has _ref_id, must load with load_data_reference)
+✗ = Scalar result (just a number/value, NOT loadable)
+
 VALIDATION CHECKS:
-1. Does the code answer the EXACT question asked?
-2. Does it access fields that actually exist in the data?
-3. Is it unnecessarily complex? (Simple is better)
-4. Does it handle the disk reference correctly? (load_data_reference returns {{'activities': [...], 'count': N}})
+1. Does the code use the CORRECT context key? (✓ keys for data, not ✗ keys)
+2. Does it answer the EXACT question asked?
+3. Does it access fields that actually exist in the data?
+4. Is it unnecessarily complex? (Simple is better)
+5. Does it handle the disk reference correctly? (load_data_reference returns {{'activities': [...], 'count': N}})
 
 CRITICAL: For counting tasks, the code should be SIMPLE:
 - Load data: loaded = load_data_reference(ref_id)
 - Count: result = len([x for x in loaded['activities'] if condition])
 - DON'T try to extract extra fields like 'date', 'description' unless specifically asked
+
+COMMON ERRORS TO FIX:
+- Using neuron_0_2 when it's a scalar result, should use neuron_0_1 (the actual data)
+- Trying to load_data_reference on a scalar result
+- Accessing wrong fields in the data structure
 
 If code is CORRECT, output: VALID
 If code needs fixing, output corrected Python code (just the code, no explanation)
@@ -991,8 +1117,111 @@ Answer:"""
         
         return selected_tool
     
+    def _clarify_vague_terms(self, neuron_desc: str, tool: Any, context: Dict) -> str:
+        """
+        Inter-neuron communication: Ask decomposer to clarify vague terms.
+        
+        This allows Neuron N to ask "what did you mean by X?" to the neuron
+        that created the task decomposition.
+        
+        Returns: Clarified description or original if no clarification needed
+        """
+        # Detect vague terms that need clarification
+        vague_terms = []
+        
+        # Common vague patterns
+        vague_patterns = {
+            r'\bkudos data\b': 'kudos data',
+            r'\bextract.*data\b': 'extract data',
+            r'\bprocess.*items\b': 'process items',
+            r'\bhandle.*activities\b': 'handle activities',
+            r'\bget.*information\b': 'get information',
+            r'\bfetch.*details\b': 'fetch details',
+        }
+        
+        desc_lower = neuron_desc.lower()
+        for pattern, term in vague_patterns.items():
+            if re.search(pattern, desc_lower):
+                vague_terms.append(term)
+        
+        if not vague_terms:
+            return neuron_desc  # No vague terms, no clarification needed
+        
+        # Get original goal from context (if available)
+        original_goal = self.context.get('_original_goal', 'Unknown goal')
+        
+        # Get sample data from context to show actual field names available
+        sample_data_info = ""
+        for key, value in context.items():
+            if key.startswith('_') or key.startswith('dendrite_'):
+                continue
+            if isinstance(value, dict):
+                if '_format' in value and value.get('_format') == 'disk_reference':
+                    # Show what fields are in this large data
+                    sample_data_info += f"\n  - {key} contains: {value.get('summary', 'data')}"
+                elif 'result' in value:
+                    # Show sample of result data
+                    result = value.get('result')
+                    if isinstance(result, list) and len(result) > 0:
+                        first_item = result[0]
+                        if isinstance(first_item, dict):
+                            sample_data_info += f"\n  - {key} has items with fields: {', '.join(first_item.keys())}"
+        
+        # Ask for clarification from the "decomposer" (simulate inter-neuron communication)
+        prompt = f"""You are the decomposer neuron that created this sub-task. A child neuron needs clarification.
+
+ORIGINAL GOAL: {original_goal}
+
+SUB-TASK (created by you): {neuron_desc}
+
+TOOL SELECTED: {tool.name} - {tool.description}
+
+AVAILABLE DATA IN CONTEXT:{sample_data_info}
+
+QUESTION: The child neuron asks: "What exactly do you mean by '{vague_terms[0]}'?"
+
+Think about:
+1. What was the ORIGINAL goal asking for?
+2. What fields/attributes should be extracted? (Use ACTUAL field names from AVAILABLE DATA above)
+3. What format should the result have?
+
+CRITICAL: Use the EXACT field names that exist in the data!
+- For Strava activities, use: 'id' (NOT 'activity_id'), 'start_date' (NOT 'timestamp'), 'name', 'sport_type', 'kudos_count'
+- Don't invent field names that don't exist in the data
+
+Examples:
+- Vague: "extract kudos data" 
+  → Clear: "extract these fields from activities: id, start_date, name, sport_type, kudos_count"
+
+- Vague: "process activities"
+  → Clear: "for each activity, extract the 'name' and 'start_date' fields"
+
+Output ONLY the clarified task description (rewrite the sub-task with EXACT field names):"""
+        
+        response = self.ollama.generate(
+            prompt,
+            system="You clarify vague task descriptions. Be specific about field names and formats.",
+            temperature=0.1
+        )
+        
+        response_str = str(response) if not isinstance(response, str) else response
+        clarified = response_str.strip().split('\n')[0]  # Take first line
+        
+        # Only use clarification if it's actually more specific (longer and mentions fields)
+        if len(clarified) > len(neuron_desc) and any(word in clarified.lower() for word in ['field', 'attribute', 'name', 'type', 'count', 'id', 'timestamp']):
+            return clarified
+        else:
+            return neuron_desc
+    
     def _micro_determine_params(self, neuron_desc: str, tool: Any, context: Dict) -> Dict[str, Any]:
         """Micro-prompt: What parameters?"""
+        
+        # STEP 0: CLARIFY vague terms before proceeding
+        # Check if neuron description contains vague terms that need clarification
+        clarified_desc = self._clarify_vague_terms(neuron_desc, tool, context)
+        if clarified_desc != neuron_desc:
+            logger.info(f"   │  │  💬 Clarified task: {clarified_desc}")
+            neuron_desc = clarified_desc  # Use clarified description
         
         param_info = "\n".join([
             f"  - {p['name']} ({p.get('type', 'any')}): {p.get('description', '')}"
@@ -1030,22 +1259,44 @@ Answer:"""
             context_info += f"\n\nCurrent item data:\n{json.dumps(dendrite_item, indent=2)[:500]}"
         elif context:
             # Show detailed data from previous steps with actual values
-            context_info += "\n\nData available from previous steps (use these values for remaining params!):"
-            for key, value in list(context.items())[:5]:  # Show up to 5 items
-                # Show actual result data, not just summary
+            context_info += "\n\nData available from previous neurons (YOUR DISPOSAL - use as needed):"
+            
+            # UNIVERSAL CONTEXT GUIDE: Show what's available for ANY tool
+            context_info += "\n\nCONTEXT KEYS AVAILABLE:"
+            for key, value in context.items():
+                if key.startswith('_'):  # Skip internal keys like _original_goal
+                    continue
+                    
                 if isinstance(value, dict):
-                    # For dicts, show relevant fields
-                    relevant_fields = {}
-                    for field_key in ['unix_timestamp', 'timestamp', 'id', 'activity_id', 'success', 'human_readable', 'count', 'year', 'month', 'after_unix', 'before_unix']:
-                        if field_key in value:
-                            relevant_fields[field_key] = value[field_key]
-                    if relevant_fields:
-                        context_info += f"\n  - {key}: {json.dumps(relevant_fields)}"
+                    if '_format' in value and value.get('_format') == 'disk_reference':
+                        # This is a DATA reference (for executeDataAnalysis)
+                        context_info += f"\n  📦 {key}: LARGE DATA - {value.get('summary', 'data reference')}"
+                        context_info += f"\n     → For Python: data['{key}']['_ref_id'] then load_data_reference(...)"
+                    elif 'success' in value and 'result' in value:
+                        # This is a RESULT from a previous neuron - SHOW THE ACTUAL DATA!
+                        result_data = value.get('result')
+                        # Format result nicely for display
+                        if isinstance(result_data, list) and len(result_data) > 0:
+                            result_str = json.dumps(result_data, indent=2)[:500]  # Show up to 500 chars
+                            context_info += f"\n  ✅ {key}: Result (list with {len(result_data)} items)"
+                            context_info += f"\n     DATA: {result_str}"
+                            context_info += f"\n     → To use as parameter: Copy this data directly into your JSON"
+                        elif isinstance(result_data, dict):
+                            result_str = json.dumps(result_data, indent=2)[:500]
+                            context_info += f"\n  ✅ {key}: Result (dict)"
+                            context_info += f"\n     DATA: {result_str}"
+                            context_info += f"\n     → To use as parameter: Copy this data directly into your JSON"
+                        else:
+                            context_info += f"\n  ✅ {key}: Result = {result_data}"
+                            context_info += f"\n     → To use as parameter: Use this value directly"
                     else:
-                        summary = self._summarize_result(value)
-                        context_info += f"\n  - {key}: {summary}"
-                else:
-                    context_info += f"\n  - {key}: {value}"
+                        context_info += f"\n  📋 {key}: {self._summarize_result(value)}"
+            
+            context_info += "\n\nHOW TO USE CONTEXT DATA:"
+            context_info += "\n  - If tool needs 'entries' parameter and neuron_0_2 shows DATA → copy that data AS-IS (keep field names unchanged)"
+            context_info += "\n  - If tool needs 'activity_id' and neuron_0_1 has activities → extract from shown data"
+            context_info += "\n  - IMPORTANT: Use the ACTUAL DATA shown above, not references to context keys"
+            context_info += "\n  - CRITICAL: Do NOT rename fields when copying data! Keep original field names (e.g., 'start_date' not 'timestamp')"
         
         prompt = """Extract parameters from the task description and available data.
 
@@ -1060,13 +1311,21 @@ CRITICAL RULES FOR PARAMETER EXTRACTION:
 1. If parameters are already auto-mapped (shown above), include them in your output
 2. For remaining REQUIRED parameters - extract from task description or context data
 3. ONLY use parameters that this tool actually accepts (check parameter list above)
-4. For date/time filtering (after_unix, before_unix): 
+4. IMPORTANT: Check "CONTEXT KEYS AVAILABLE" - previous neurons have produced data you can use!
+   - If tool needs 'entries' and you see "neuron_0_2: Result = [...]" → use that result AS-IS
+   - If tool needs list data and neuron_0_X has it → extract neuron_0_X['result']
+   - DO NOT rename fields! If data has 'start_date', keep it as 'start_date' (don't rename to 'timestamp')
+5. For mergeTimeseriesState specifically:
+   - Copy 'entries' data with original field names unchanged
+   - Set 'timestamp_field' to match the actual field name in the data (e.g., 'start_date' not 'timestamp')
+   - Set 'id_field' to match the actual ID field in the data (e.g., 'id')
+6. For date/time filtering (after_unix, before_unix): 
    - Use these ONLY if the tool accepts them AND the task requires date filtering
    - If task says "format" or "display" without mentioning dates, DON'T add date filters
-5. If task mentions extracting data from previous steps, look for it in context (e.g., "activities", "activity_id")
-6. Extract numeric values as integers, not strings
-7. Do NOT use fake/example values like 12345 or 1234567890
-8. Check the parameter list - if a parameter is not listed, do NOT include it
+7. If task mentions extracting data from previous steps, look for it in context (e.g., "activities", "activity_id")
+8. Extract numeric values as integers, not strings
+8. Do NOT use fake/example values like 12345 or 1234567890
+9. Check the parameter list - if a parameter is not listed, do NOT include it
 
 EXAMPLES:
 - Task: "Fetch activities from January 2024", auto-mapped: {{"after_unix": 1704067200, "before_unix": 1706745599}}
@@ -1074,6 +1333,9 @@ EXAMPLES:
 
 - Task: "Format the activities", Tool params: [name, description], auto-mapped: {{"after_unix": 1704067200}}
   → Output: {{}} (don't include after_unix - tool doesn't accept it!)
+
+- Task: "Merge extracted data", Tool needs: entries, Context shows: neuron_0_2: Result = [{{...}}, {{...}}]
+  → Output: {{"entries": [extracted data from neuron_0_2]}}
 
 - Task: "Get first 3 activities", context shows activities list
   → Output: {{}} or {{"per_page": 3}} (depending on tool params)
@@ -1087,7 +1349,7 @@ Output JSON only (no explanation):""".format(
         
         response = self.ollama.generate(
             prompt,
-            system="Provide parameters as JSON. Only include params the tool accepts. Output only valid JSON.",
+            system="Extract parameters from context and output as JSON. When context shows 'neuron_0_X: Result = [data]', include that actual data in your JSON output. Output only valid JSON with actual values, not references.",
             temperature=0.1  # Lower temperature for more deterministic extraction
         )
         
@@ -1452,10 +1714,52 @@ Provide a brief summary (2-3 sentences):"""
         
         response_str = str(response) if not isinstance(response, str) else response
         
+        # Truncate large detailed_results to keep logs readable
+        truncated_results = self._truncate_large_results(results, max_size_kb=10)
+        
         return {
             'summary': response_str.strip(),
-            'detailed_results': results
+            'detailed_results': truncated_results
         }
+    
+    def _truncate_large_results(self, results: List[Any], max_size_kb: int = 10) -> List[Any]:
+        """Truncate large results to keep logs readable."""
+        import json
+        
+        # Check total size
+        results_json = json.dumps(results)
+        size_kb = len(results_json) / 1024
+        
+        if size_kb <= max_size_kb:
+            return results  # Small enough, keep as-is
+        
+        # Truncate each result
+        truncated = []
+        for result in results:
+            if isinstance(result, dict):
+                # Keep metadata but truncate large data fields
+                truncated_result = {}
+                for key, value in result.items():
+                    if key in ['success', 'count', 'error', 'message', 'added', 'duplicates', 'total_count']:
+                        # Keep small metadata fields
+                        truncated_result[key] = value
+                    elif isinstance(value, (list, dict)):
+                        # Truncate large structures
+                        value_json = json.dumps(value)
+                        if len(value_json) > 500:
+                            if isinstance(value, list):
+                                truncated_result[key] = f"[{len(value)} items, truncated for brevity]"
+                            else:
+                                truncated_result[key] = "[large object, truncated for brevity]"
+                        else:
+                            truncated_result[key] = value
+                    else:
+                        truncated_result[key] = value
+                truncated.append(truncated_result)
+            else:
+                truncated.append(result)
+        
+        return truncated
     
     def _micro_aggregate_dendrites(self, parent_result: Any, items: List[Dict], dendrite_results: List[Any]) -> Any:
         """Micro-prompt: Merge dendrite results back into parent."""
