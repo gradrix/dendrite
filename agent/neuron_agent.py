@@ -1951,7 +1951,8 @@ Provide a brief summary (2-3 sentences):"""
                                 context_summary += f"\n    Each activity has: {', '.join(first_activity.keys())}"
                                 context_summary += f"\n    Example: {json.dumps(first_activity, indent=4)[:500]}"
                     else:
-                        context_summary += f"\n  {key}: {json.dumps(value, indent=2)[:400]}"
+                        # For timestamp/date results, show full data (not truncated)
+                        context_summary += f"\n  {key}: {json.dumps(value, indent=2)}"
                 else:
                     context_summary += f"\n  {key}: {value}"
         
@@ -1972,11 +1973,17 @@ Provide a brief summary (2-3 sentences):"""
             task_type += "\n3. List them clearly with their names"
         elif any(word in neuron_desc.lower() for word in ['format', 'report', 'present', 'show']):
             task_type = "\n\n**YOU ARE FORMATTING/REPORTING DATA**"
-            task_type += "\n1. Take the existing data from context above"
-            task_type += "\n2. Present the ACTUAL VALUES (timestamps, dates, numbers, etc.)"
-            task_type += "\n3. Make it human-readable but INCLUDE THE RAW DATA"
-            task_type += "\n4. DO NOT just summarize - SHOW the actual results"
-            task_type += "\n\nExample: Instead of 'The timestamp was converted', say 'Unix timestamp: 1704067200 (January 1, 2024)'"
+            task_type += "\n**CRITICAL**: You must extract and display the ACTUAL DATA VALUES from the context above."
+            task_type += "\n**DO NOT** write 'the workflow was successful' or 'all steps completed'."
+            task_type += "\n**DO** write the actual numbers, timestamps, dates, validation results."
+            task_type += "\n\nRequired format:"
+            task_type += "\n1. Current date/time: [ACTUAL TIMESTAMP AND DATE]"
+            task_type += "\n2. Converted timestamp: [ACTUAL NUMBER]"
+            task_type += "\n3. Validation: [ACTUAL RESULT: valid/invalid]"
+            task_type += "\n\nExample output:"
+            task_type += "\n- Current: 1761432898 (October 25, 2025)"
+            task_type += "\n- January 2024: 1706745600 (February 1, 2024)"
+            task_type += "\n- Validation: ✅ Valid"
         
         prompt = f"""Task: {neuron_desc}
 {context_summary}
@@ -1986,7 +1993,7 @@ Your answer:"""
         
         # Debug: save full prompt to file
         try:
-            debug_file = f"/tmp/ai_prompt_debug_{goal_type}_{self.depth}_{self.sequence}.txt"
+            debug_file = f"/tmp/ai_prompt_debug_d{self.depth}_s{self.sequence}.txt"
             with open(debug_file, 'w') as f:
                 f.write("=== FULL PROMPT ===\n")
                 f.write(prompt)
@@ -1999,9 +2006,15 @@ Your answer:"""
         # Log prompt stats
         logger.info(f"   │  │  📝 Prompt: {len(prompt)} chars, {len(prompt.split())} words")
         
+        # Adjust system prompt based on task type
+        if 'FORMATTING/REPORTING' in prompt:
+            system_prompt = "Extract and display ACTUAL data values (numbers, timestamps, dates). Never say 'workflow successful' - always show the real data."
+        else:
+            system_prompt = "You count and analyze data precisely. For counting: examine each item in the list and count matches. Output exact numbers."
+        
         response = self.ollama.generate(
             prompt,
-            system="You count and analyze data precisely. For counting: examine each item in the list and count matches. Output exact numbers.",
+            system=system_prompt,
             temperature=0.1  # Lower temperature for more deterministic analysis
         )
         
@@ -2058,6 +2071,16 @@ Your answer:"""
                         return f"Success: {result['count']} items"
                     elif 'activity_id' in result:
                         return f"Success: operation completed for activity {result['activity_id']}"
+                    # For timestamp/date conversions, show the actual values
+                    elif 'unix_timestamp' in result or 'human_readable' in result:
+                        parts = []
+                        if 'unix_timestamp' in result:
+                            parts.append(f"timestamp={result['unix_timestamp']}")
+                        if 'human_readable' in result:
+                            parts.append(f"date={result['human_readable']}")
+                        if 'is_valid' in result:
+                            parts.append(f"valid={result['is_valid']}")
+                        return f"Success: {', '.join(parts)}"
                     else:
                         return "Success: operation completed"
                 else:
