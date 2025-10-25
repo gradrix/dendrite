@@ -1721,19 +1721,28 @@ Answer yes or no:"""
         quantity_match = re.search(r'\b(first|top|last)\s+(\d+)\b', goal.lower())
         target_count = int(quantity_match.group(2)) if quantity_match else None
         
+        if target_count:
+            logger.info(f"🎯 Target count from goal: {target_count}")
+        
         # Collect all successful formatting results
         formatting_results = []
         for neuron, result in zip(reversed(neurons), reversed(results)):
             is_formatting = any(kw in neuron.description.lower() for kw in formatting_keywords)
             if not is_formatting:
                 continue
+            
+            logger.info(f"   Checking neuron {neuron.index}: {neuron.description[:50]}...")
                 
             # Check for AI response type
             if isinstance(result, dict) and result.get('type') == 'ai_response':
                 formatting_results.append((neuron.index, result.get('answer', ''), 'ai'))
+                logger.info(f"   ✅ Found AI response")
             # Check for executeDataAnalysis result with string output
             elif isinstance(result, dict) and result.get('success') and 'result' in result and isinstance(result['result'], str):
                 formatting_results.append((neuron.index, result['result'], 'python'))
+                logger.info(f"   ✅ Found Python result with {len(result['result'].split(chr(10)))} lines")
+        
+        logger.info(f"📋 Found {len(formatting_results)} formatting results total")
         
         # If we have formatting results, pick the best one
         if formatting_results:
