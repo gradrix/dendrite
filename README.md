@@ -1,6 +1,10 @@
-# Neuron Agent: Self-Organizing AI with Biological Neural Architecture
+# Dendrite: Self-Organizing AI with Biological Neural Architecture
 
-A unique AI agent that **thinks in neurons** - breaking down complex goals into micro-prompt chains that auto-decompose, self-correct, and execute autonomously. Built on Ollama LLM with a containerized infrastructure.
+A unique AI agent that **thinks in neurons** - breaking down complex goals into micro-prompt chains that auto-decompose, self-correct, and execute autonomously. 
+
+**🔒 100% Local. No API Keys. No Cloud. Your Data Stays Yours.**
+
+Built on Ollama LLM with a containerized infrastructure - runs on anything from **Raspberry Pi to workstations**.
 
 ## 🧠 What Makes This Unique
 
@@ -8,11 +12,12 @@ This isn't just another LLM wrapper. This is a **self-organizing agent** inspire
 
 - **🔬 Neuron-Based Execution**: Each task is a "neuron" firing 50-100 token micro-prompts
 - **🌿 Auto-Decomposition**: Complex goals automatically break into sub-neurons (dendrites)
-- **� Self-Correction**: Error reflection and automatic retry with corrective neurons
+- **🔄 Self-Correction**: Error reflection and automatic retry with corrective neurons
 - **💾 Smart Context**: Large data (>5KB) auto-saves to disk, keeps context lean
 - **🧩 Intelligent Spawning**: Detects "for each" patterns and spawns parallel sub-tasks
 - **🎯 Memory Overseer**: Loads only relevant saved state, prevents context bloat
 - **✅ Continuous Validation**: Every neuron validates before continuing
+- **🔒 Privacy-First**: Everything runs locally - no OpenAI, no cloud, no API keys
 
 ### Example: Natural Language → Auto-Execution
 
@@ -37,10 +42,15 @@ Result: "28 activities"
 
 - 🐳 **Fully Containerized**: All components run in Docker (no host dependencies)
 - 🤖 **LLM Ready**: Pre-configured with Llama 3.1, Mistral, or other 8B models
-- 🔌 **API Access**: RESTful API on port 11434
+- 🔌 **Local Execution**: RESTful API on port 11434
 - ⚙️ **Configurable**: Easy customization via `.env` file
-- �️ **Production Ready**: Smart validation, error handling, and result truncation
-
+- 🛠️ **Production Ready**: Smart validation, error handling, and result truncation
+- **🔒 100% Local & Private**: 
+  - ❌ No OpenAI API keys required
+  - ❌ No cloud dependencies  
+  - ✅ Your data never leaves your machine
+  - ✅ Runs on Raspberry Pi, NUC, or any Docker-capable device
+  - ✅ Perfect for privacy-sensitive applications
 
 ## 🎯 Architecture Highlights
 
