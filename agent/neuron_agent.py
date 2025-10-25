@@ -1719,12 +1719,21 @@ Answer yes or no:"""
         formatting_keywords = ['format', 'report', 'present', 'show', 'display', 'human-readable']
         is_formatting = any(kw in last_neuron.description.lower() for kw in formatting_keywords)
         
-        if is_formatting and isinstance(last_result, dict) and last_result.get('type') == 'ai_response':
-            logger.info(f"📝 Using formatted answer from final neuron")
-            return {
-                'summary': last_result.get('answer', ''),
-                'detailed_results': results
-            }
+        if is_formatting:
+            # Check for AI response type
+            if isinstance(last_result, dict) and last_result.get('type') == 'ai_response':
+                logger.info(f"📝 Using formatted answer from final neuron (AI response)")
+                return {
+                    'summary': last_result.get('answer', ''),
+                    'detailed_results': results
+                }
+            # Check for executeDataAnalysis result with string output
+            elif isinstance(last_result, dict) and 'result' in last_result and isinstance(last_result['result'], str):
+                logger.info(f"📝 Using formatted answer from final neuron (Python result)")
+                return {
+                    'summary': last_result['result'],
+                    'detailed_results': results
+                }
         
         # For counting questions, find the final count result
         is_counting = any(word in goal.lower() for word in ['how many', 'count'])
