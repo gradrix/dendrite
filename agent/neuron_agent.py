@@ -92,7 +92,7 @@ class NeuronAgent:
         """
         try:
             # 1. List all state keys (fast, no data loading yet)
-            keys_result = self.tools.call_tool('listStateKeys', {})
+            keys_result = self.tools.execute_tool('listStateKeys')
             
             if not keys_result.get('success') or not keys_result.get('keys'):
                 return {}
@@ -147,7 +147,7 @@ If none relevant, output:
             # 4. Load only relevant state
             memory_context = {}
             for key in relevant_keys:
-                result = self.tools.call_tool('loadState', {'key': key})
+                result = self.tools.execute_tool('loadState', key=key)
                 if result.get('success') and result.get('found'):
                     memory_context[key] = result['value']
                     logger.info(f"🧠 Loaded memory: {key} ({len(str(result['value']))} chars)")
@@ -267,10 +267,12 @@ If none relevant, output:
                     corrective_result = self._execute_neuron(corrective_neuron, goal)
                     logger.info(f"{'  ' * depth}   ✅ Corrective neuron complete")
                     
-                    # Update final result with corrected output
+                    # Append corrective result and re-aggregate
                     if isinstance(corrective_result, dict) and corrective_result.get('success'):
-                        final_result = corrective_result
                         all_results.append(corrective_result)
+                        neurons.append(corrective_neuron)
+                        # Re-aggregate with updated results
+                        final_result = self._micro_aggregate(goal, neurons, all_results)
                     
                 except Exception as e:
                     logger.error(f"{'  ' * depth}   ❌ Corrective neuron failed: {e}")
@@ -983,15 +985,33 @@ Response:"""
         # Check if task mentions working with existing/fetched/previous data (for formatting only)
         works_with_existing = any(word in neuron_desc.lower() for word in [
             'existing', 'available', 'fetched', 'current results', 'all three', 
-            'above', 'results', 'data', 'from previous', 'from fetched'
+            'above', 'results', 'data', 'from previous', 'from fetched', 'first'
         ])
         
         has_context = len(self.context) > 0
         
-        # If it's about formatting EXISTING data (not counting), use AI
+        # Check if context contains a data reference (compacted large data)
+        has_data_reference = any(
+            isinstance(v, dict) and v.get('_format') == 'disk_reference' 
+            for v in self.context.values()
+        )
+        
+        # If it's about formatting EXISTING data...
         if has_format_keyword and (works_with_existing or has_context):
-            logger.info(f"   │  │  💡 Detected formatting task on existing data, will use AI response")
-            return None
+            # If data is compacted to disk, we need executeDataAnalysis to load it
+            if has_data_reference:
+                logger.info(f"   │  │  💡 Detected formatting of compacted data, suggesting executeDataAnalysis")
+                # Return executeDataAnalysis tool for loading and formatting
+                for tool in self.tools.list_tools():
+                    if tool.name.lower() == 'executedataanalysis':
+                        return tool
+                # Fallback if tool not found
+                logger.warning(f"   │  │  ⚠️  executeDataAnalysis tool not found, using AI")
+                return None
+            else:
+                # Small data in context, AI can format directly
+                logger.info(f"   │  │  💡 Detected formatting task on existing data, will use AI response")
+                return None
         
         # Intent-based matching with stronger signals
         desc_lower = neuron_desc.lower()
@@ -1837,12 +1857,40 @@ Provide a brief summary (2-3 sentences):"""
         """Fallback: Use AI to answer directly using context data."""
         
         # Build context summary - include actual data structures
+        # Filter out non-serializable objects (like Neuron instances)
+        serializable_context = {}
+        for key, value in self.context.items():
+            try:
+                # Try to serialize - if it fails, skip or convert
+                json.dumps(value)
+                serializable_context[key] = value
+            except TypeError:
+                # Not JSON serializable (e.g., Neuron objects)
+                if isinstance(value, dict):
+                    # Try to extract serializable parts
+                    clean_value = {}
+                    for k, v in value.items():
+                        try:
+                            json.dumps(v)
+                            clean_value[k] = v
+                        except TypeError:
+                            # Skip non-serializable nested values
+                            continue
+                    if clean_value:
+                        serializable_context[key] = clean_value
+        
         context_summary = ""
         compact_data = None  # For small model optimization
         
-        if self.context:
+        # Debug: log what context we have
+        logger.info(f"   │  │  🔍 Context keys available: {list(serializable_context.keys())}")
+        
+        if serializable_context:
             context_summary = "\n\nAvailable data:"
-            for key, value in list(self.context.items())[:10]:
+            for key, value in list(serializable_context.items())[:10]:
+                # Log each context item for debugging
+                logger.info(f"   │  │  📦 {key}: {type(value).__name__} = {str(value)[:100]}")
+                
                 if isinstance(value, dict):
                     # For activities list, OPTIMIZE for small models
                     if 'activities' in value:
@@ -1922,16 +1970,31 @@ Provide a brief summary (2-3 sentences):"""
             task_type += "\n1. Look at the activities list"
             task_type += "\n2. Find items matching the criteria"
             task_type += "\n3. List them clearly with their names"
-        elif any(word in neuron_desc.lower() for word in ['format', 'report', 'present']):
-            task_type = "\n\n**YOU ARE FORMATTING**"
-            task_type += "\n1. Take the existing data"
-            task_type += "\n2. Present it in a clear, readable format"
+        elif any(word in neuron_desc.lower() for word in ['format', 'report', 'present', 'show']):
+            task_type = "\n\n**YOU ARE FORMATTING/REPORTING DATA**"
+            task_type += "\n1. Take the existing data from context above"
+            task_type += "\n2. Present the ACTUAL VALUES (timestamps, dates, numbers, etc.)"
+            task_type += "\n3. Make it human-readable but INCLUDE THE RAW DATA"
+            task_type += "\n4. DO NOT just summarize - SHOW the actual results"
+            task_type += "\n\nExample: Instead of 'The timestamp was converted', say 'Unix timestamp: 1704067200 (January 1, 2024)'"
         
         prompt = f"""Task: {neuron_desc}
 {context_summary}
 {task_type}
 
 Your answer:"""
+        
+        # Debug: save full prompt to file
+        try:
+            debug_file = f"/tmp/ai_prompt_debug_{goal_type}_{self.depth}_{self.sequence}.txt"
+            with open(debug_file, 'w') as f:
+                f.write("=== FULL PROMPT ===\n")
+                f.write(prompt)
+                f.write("\n\n=== SERIALIZABLE CONTEXT ===\n")
+                f.write(json.dumps(serializable_context, indent=2)[:2000])
+            logger.info(f"   │  │  📝 Debug prompt saved to {debug_file}")
+        except Exception as e:
+            logger.warning(f"   │  │  ⚠️  Could not save debug prompt: {e}")
         
         # Log prompt stats
         logger.info(f"   │  │  📝 Prompt: {len(prompt)} chars, {len(prompt.split())} words")

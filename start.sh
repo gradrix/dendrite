@@ -33,7 +33,7 @@ print_header() {
 MODE="scheduler"
 INSTRUCTION=""
 USE_V2=false
-TEXT_OUTPUT=false
+JSON_OUTPUT=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -46,13 +46,18 @@ while [[ $# -gt 0 ]]; do
             INSTRUCTION="$2"
             shift 2
             ;;
-        --text)
-            TEXT_OUTPUT=true
+        --json)
+            JSON_OUTPUT=true
             shift
             ;;
         --v2)
             USE_V2=true
             shift
+            ;;
+        --goal)
+            MODE="goal"
+            GOAL="$2"
+            shift 2
             ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
@@ -60,6 +65,8 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --once                Run all instructions once and exit"
             echo "  --instruction NAME    Run specific instruction only"
+            echo "  --goal \"TEXT\"         Run with natural language goal"
+            echo "  --json                Output full JSON structure (default: clean text)"
             echo "  --v2                  Use v2 step-by-step execution (better for small models)"
             echo "  --help, -h           Show this help message"
             echo ""
@@ -146,11 +153,11 @@ if [ "$USE_V2" = true ]; then
     print_info "Using v2 step-by-step execution"
 fi
 
-# Build text output flag if needed
-TEXT_FLAG=""
-if [ "$TEXT_OUTPUT" = true ]; then
-    TEXT_FLAG="--text"
-    print_info "Using text output mode (clean answers)"
+# Build JSON output flag if needed
+JSON_FLAG=""
+if [ "$JSON_OUTPUT" = true ]; then
+    JSON_FLAG="--json"
+    print_info "Using JSON output mode (verbose structured data)"
 fi
 
 # Determine the command to run
@@ -158,12 +165,17 @@ case $MODE in
     once)
         print_header "Running Agent Once"
         print_info "Agent will run all instructions once and exit"
-        $DOCKER_COMPOSE run --rm agent python main.py --once $V2_FLAG $TEXT_FLAG
+        $DOCKER_COMPOSE run --rm agent python main.py --once $V2_FLAG $JSON_FLAG
         ;;
     instruction)
         print_header "Running Specific Instruction"
         print_info "Instruction: $INSTRUCTION"
-        $DOCKER_COMPOSE run --rm agent python main.py --instruction "$INSTRUCTION" $V2_FLAG $TEXT_FLAG
+        $DOCKER_COMPOSE run --rm agent python main.py --instruction "$INSTRUCTION" $V2_FLAG $JSON_FLAG
+        ;;
+    goal)
+        print_header "Running Goal"
+        print_info "Goal: $GOAL"
+        $DOCKER_COMPOSE run --rm agent python main.py --goal "$GOAL" $V2_FLAG $JSON_FLAG
         ;;
     scheduler)
         print_header "Starting Agent Scheduler"

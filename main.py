@@ -135,16 +135,13 @@ class AIAgent:
         logger.info("Initialization complete!")
         return True
     
-    def execute_goal(self, goal: str, text_output: bool = False):
+    def execute_goal(self, goal: str, json_output: bool = False):
         """
-        Execute a natural language goal using neuron-based agent.
-        
-        Uses self-organizing micro-prompt chains with automatic list iteration.
-        Perfect for small models (3B params).
+        Execute a single goal.
         
         Args:
-            goal: Natural language description (e.g., "Get activities with kudos details")
-            text_output: If True, output clean text answer instead of JSON structure
+            goal: Natural language goal
+            json_output: If True, output full JSON structure; if False (default), clean text answer
         """
         from agent.neuron_agent import NeuronAgent
         
@@ -187,33 +184,35 @@ class AIAgent:
             logger.info(f"Duration: {duration:.2f}s")
             logger.info("")
             
-            # Output mode: clean text vs full JSON
-            if text_output:
-                # Extract clean answer
-                final_result = result.get('final', {})
-                if isinstance(final_result, dict):
-                    answer = final_result.get('summary', str(final_result))
-                else:
-                    answer = str(final_result)
-                
-                logger.info("Answer:")
-                logger.info(answer)
-            else:
-                logger.info("Output:")
-                # Extract clean output
+            # Default: Clean text output
+            # With --json flag: Full structured output
+            if json_output:
+                logger.info("Output (JSON):")
+                # Show full structured output
                 final = result.get('final', result.get('results', 'No output'))
+                logger.info(json.dumps(final, indent=2))
+            else:
+                logger.info("Answer:")
+                # Extract clean human-readable answer
+                final_result = result.get('final', {})
                 
-                # For simple questions, show clean answer
-                if isinstance(final, dict):
-                    # Check if it's a simple count/answer result
-                    if 'answer' in final:
-                        logger.info(final['answer'])
-                    elif 'count' in final and len(final) <= 3:  # Simple count result
-                        logger.info(final['count'])
+                if isinstance(final_result, dict):
+                    # Look for AI response first (formatted answers)
+                    detailed = final_result.get('detailed_results', [])
+                    for item in detailed:
+                        if item.get('type') == 'ai_response' and 'answer' in item:
+                            logger.info(item['answer'])
+                            break
                     else:
-                        logger.info(final)
+                        # Fall back to summary
+                        answer = final_result.get('summary', final_result.get('answer', str(final_result)))
+                        logger.info(answer)
+                elif isinstance(final_result, list):
+                    # Format list nicely
+                    for idx, item in enumerate(final_result, 1):
+                        logger.info(f"{idx}. {item}")
                 else:
-                    logger.info(final)
+                    logger.info(str(final_result))
             
             logger.info("============================================================")
             
@@ -386,9 +385,9 @@ def main():
         help='Run all instructions once'
     )
     parser.add_argument(
-        '--text',
+        '--json',
         action='store_true',
-        help='Output clean text answer instead of JSON structure'
+        help='Output full JSON structure (default: clean text answer)'
     )
     
     args = parser.parse_args()
@@ -404,7 +403,7 @@ def main():
     # Run based on mode
     if args.goal:
         # Direct goal execution
-        agent.execute_goal(args.goal, text_output=args.text)
+        agent.execute_goal(args.goal, json_output=args.json)
     elif args.instruction:
         # Load goal from instruction file
         instruction_path = Path("instructions") / f"{args.instruction}.yaml"
@@ -421,7 +420,7 @@ def main():
             sys.exit(1)
         
         logger.info(f"Loaded instruction: {data.get('name', args.instruction)}")
-        agent.execute_goal(goal, text_output=args.text)
+        agent.execute_goal(goal, json_output=args.json)
     elif args.once:
         # Run all instructions once
         instructions_dir = Path("instructions")

@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 @tool(
     name="executeDataAnalysis",
-    description="Execute Python code for 100% accurate counting, filtering, and analysis. CRITICAL: Use this for ANY counting task (even 'how many' questions) - AI models miscount, Python doesn't. Access data via context keys like data['neuron_0_2']. If data is a disk reference (_format='disk_reference'), use load_data_reference(ref_id) which returns a dict with 'activities' key. Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
+    description="Execute Python code for 100% accurate counting, filtering, and analysis. CRITICAL: Use this for ANY counting task (even 'how many' questions) - AI models miscount, Python doesn't. Access data via context keys like data['neuron_0_2']. IMPORTANT: Check if data has '_ref_id' key - if yes, load with load_data_reference(ref_id) which returns {'activities': [...]}; if no, data already contains the list directly. Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
     parameters=[
         {
             "name": "python_code",
             "type": "string",
-            "description": "Python code to execute. Has access to 'data' variable containing all context and load_data_reference() function. IMPORTANT: load_data_reference() returns {'activities': [...], 'count': N, 'success': True}, so use loaded_data['activities'] to access the list. Example: ref_id = data['neuron_0_2']['_ref_id']; loaded = load_data_reference(ref_id); result = len([x for x in loaded['activities'] if 'Run' in x.get('sport_type', '')]). Must assign to 'result' variable.",
+            "description": "Python code to execute. Has access to 'data' variable and load_data_reference() function. IMPORTANT: First check if '_ref_id' exists in data, then: WITH ref: ref_id = data['neuron_0_2']['_ref_id']; loaded = load_data_reference(ref_id); result = len([x for x in loaded['activities'] if ...]). WITHOUT ref (direct data): result = len([x for x in data['neuron_0_2']['activities'] if ...]). Must assign to 'result' variable.",
             "required": True
         }
     ],

@@ -99,6 +99,7 @@ def load_data_reference(ref_id: str) -> Any:
 def _generate_summary(data: Any) -> str:
     """
     Generate a human-readable summary of data structure.
+    Includes sample data for the first few items to help with formatting tasks.
     
     Args:
         data: The data to summarize
@@ -114,7 +115,14 @@ def _generate_summary(data: Any) -> str:
                 item_type = type(value[0]).__name__
                 sample_keys = list(value[0].keys())[:5] if isinstance(value[0], dict) else []
                 keys_str = f" with fields: {', '.join(sample_keys)}" if sample_keys else ""
-                return f"{len(value)} {key} ({item_type}){keys_str}"
+                
+                # Include sample of first 3 items for formatting tasks
+                sample_data = ""
+                if isinstance(value[0], dict):
+                    sample_items = value[:3]  # First 3 items
+                    sample_data = "\nFirst 3 items: " + json.dumps(sample_items, indent=2, default=str)[:500]
+                
+                return f"List of {len(value)} {item_type}{keys_str}{sample_data}"
         
         # Generic dict summary
         keys = list(data.keys())[:5]
@@ -126,7 +134,23 @@ def _generate_summary(data: Any) -> str:
         item_type = type(data[0]).__name__
         sample_keys = list(data[0].keys())[:5] if isinstance(data[0], dict) else []
         keys_str = f" with fields: {', '.join(sample_keys)}" if sample_keys else ""
-        return f"List of {len(data)} {item_type}{keys_str}"
+        
+        # Include sample of first 3 items for formatting tasks
+        sample_data = ""
+        if isinstance(data[0], dict):
+            sample_items = data[:3]  # First 3 items
+            # Extract key fields only to keep it compact
+            compact_sample = []
+            for item in sample_items:
+                compact_item = {}
+                # Common important fields
+                for field in ['name', 'type', 'distance', 'moving_time', 'start_date', 'start_date_local', 'id']:
+                    if field in item:
+                        compact_item[field] = item[field]
+                compact_sample.append(compact_item)
+            sample_data = "\n\nFirst 3 items:\n" + json.dumps(compact_sample, indent=2, default=str)
+        
+        return f"List of {len(data)} {item_type}{keys_str}{sample_data}"
     
     else:
         return f"{type(data).__name__}: {str(data)[:100]}"
