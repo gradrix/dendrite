@@ -327,7 +327,7 @@ If none relevant, output:
             tool = self._micro_find_tool(neuron.description)
             if not tool:
                 logger.warning(f"{indent}│  │  ⚠️  No tool found, using AI")
-                return self._micro_ai_response(neuron.description)
+                return self._micro_ai_response(neuron.description, depth=neuron.depth, sequence=neuron.index)
             
             logger.info(f"{indent}│  ├─ Tool: {tool.name}")
             
@@ -1712,6 +1712,20 @@ Answer yes or no:"""
         if len(neurons) == 1:
             return results[0]
         
+        # Check if the last neuron was a formatting task that produced an AI response
+        # If so, use that directly - it already has the formatted answer!
+        last_neuron = neurons[-1]
+        last_result = results[-1]
+        formatting_keywords = ['format', 'report', 'present', 'show', 'display', 'human-readable']
+        is_formatting = any(kw in last_neuron.description.lower() for kw in formatting_keywords)
+        
+        if is_formatting and isinstance(last_result, dict) and last_result.get('type') == 'ai_response':
+            logger.info(f"📝 Using formatted answer from final neuron")
+            return {
+                'summary': last_result.get('answer', ''),
+                'detailed_results': results
+            }
+        
         # For counting questions, find the final count result
         is_counting = any(word in goal.lower() for word in ['how many', 'count'])
         if is_counting:
@@ -1853,7 +1867,7 @@ Provide a brief summary (2-3 sentences):"""
         
         return parent_result
     
-    def _micro_ai_response(self, neuron_desc: str) -> Dict[str, Any]:
+    def _micro_ai_response(self, neuron_desc: str, depth: int = 0, sequence: int = 0) -> Dict[str, Any]:
         """Fallback: Use AI to answer directly using context data."""
         
         # Build context summary - include actual data structures
@@ -1993,7 +2007,7 @@ Your answer:"""
         
         # Debug: save full prompt to file
         try:
-            debug_file = f"/tmp/ai_prompt_debug_d{self.depth}_s{self.sequence}.txt"
+            debug_file = f"/tmp/ai_prompt_debug_d{depth}_s{sequence}.txt"
             with open(debug_file, 'w') as f:
                 f.write("=== FULL PROMPT ===\n")
                 f.write(prompt)
@@ -2055,6 +2069,9 @@ Your answer:"""
     def _summarize_result(self, result: Any) -> str:
         """Summarize result for logging."""
         if isinstance(result, dict):
+            # Handle AI responses first (most important for formatting tasks)
+            if result.get('type') == 'ai_response' and 'answer' in result:
+                return result['answer']
             if 'error' in result:
                 return f"Error: {result['error']}"
             if 'entries' in result:
