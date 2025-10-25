@@ -157,7 +157,8 @@ class AIAgent:
                 # Create agent with NeuronAgent (self-organizing micro-prompt chains with automatic list iteration)
         agent = NeuronAgent(
             ollama=self.ollama,
-            tool_registry=self.registry
+            tool_registry=self.registry,
+            config=self.config
         )
         
         start_time = time.time()

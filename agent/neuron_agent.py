@@ -73,10 +73,12 @@ class NeuronAgent:
     def __init__(
         self,
         ollama: OllamaClient,
-        tool_registry: ToolRegistry
+        tool_registry: ToolRegistry,
+        config: Optional[Dict] = None
     ):
         self.ollama = ollama
         self.tools = tool_registry
+        self.config = config or {}
         self.context: Dict[str, Any] = {}
         self.execution_log: List[str] = []  # For debugging
         
@@ -238,10 +240,45 @@ class NeuronAgent:
                 params_str = str(params)[:100]
             logger.info(f"{indent}│  ├─ Params: {params_str}")
             
+            # Step 2.5: Validate Python code for executeDataAnalysis
+            if tool.name == 'executeDataAnalysis' and 'python_code' in params:
+                validated_code = self._validate_python_code(
+                    neuron.description,
+                    params['python_code'],
+                    self.context
+                )
+                if validated_code:
+                    logger.info(f"{indent}│  ├─ ✅ Code validated")
+                    params['python_code'] = validated_code
+            
             # Step 3: Execute tool
             try:
-                result = tool.execute(**params)
+                # Special case: executeDataAnalysis needs context
+                if tool.name == 'executeDataAnalysis':
+                    result = tool.execute(**params, **self.context)
+                else:
+                    result = tool.execute(**params)
                 logger.info(f"{indent}│  ├─ Result: {self._summarize_result(result)}")
+                
+                # Check if execution returned an error with retry flag
+                if isinstance(result, dict) and not result.get('success', True):
+                    error_msg = result.get('error', 'Unknown error')
+                    should_retry = result.get('retry', False)
+                    hint = result.get('hint', '')
+                    
+                    logger.warning(f"{indent}│  │  ⚠️  Tool returned error: {error_msg}")
+                    if hint:
+                        logger.info(f"{indent}│  │  💡 Hint: {hint}")
+                    
+                    if should_retry and attempt < self.MAX_RETRIES:
+                        logger.info(f"{indent}│  │  🔄 Retrying with corrected code...")
+                        # Re-validate and regenerate code
+                        continue
+                    elif not should_retry:
+                        # Fatal error, don't retry
+                        logger.error(f"{indent}│  │  ❌ Fatal error, cannot retry")
+                        raise Exception(error_msg)
+                    
             except Exception as e:
                 import traceback
                 error_msg = str(e)
@@ -701,18 +738,102 @@ Output numbered list (1-4 steps, NO duplicates):"""
         logger.info(f"   💡 Strategy advice provided for: {goal[:50]}...")
         return strategy
     
+    def _validate_python_code(self, task: str, python_code: str, context: Dict) -> Optional[str]:
+        """
+        Validate that Python code will correctly answer the task.
+        Returns simplified/corrected code or None if validation fails.
+        """
+        # Get context summary for validation
+        context_summary = []
+        for key, value in context.items():
+            if isinstance(value, dict):
+                if '_format' in value and value.get('_format') == 'disk_reference':
+                    context_summary.append(f"  {key}: Disk reference with summary: {value.get('summary', 'N/A')}")
+                else:
+                    context_summary.append(f"  {key}: {self._summarize_result(value)}")
+        
+        prompt = f"""Validate this Python code will correctly answer the task.
+
+TASK: {task}
+
+PYTHON CODE:
+```python
+{python_code}
+```
+
+AVAILABLE CONTEXT:
+{chr(10).join(context_summary)}
+
+VALIDATION CHECKS:
+1. Does the code answer the EXACT question asked?
+2. Does it access fields that actually exist in the data?
+3. Is it unnecessarily complex? (Simple is better)
+4. Does it handle the disk reference correctly? (load_data_reference returns {{'activities': [...], 'count': N}})
+
+CRITICAL: For counting tasks, the code should be SIMPLE:
+- Load data: loaded = load_data_reference(ref_id)
+- Count: result = len([x for x in loaded['activities'] if condition])
+- DON'T try to extract extra fields like 'date', 'description' unless specifically asked
+
+If code is CORRECT, output: VALID
+If code needs fixing, output corrected Python code (just the code, no explanation)
+If code is completely wrong, output: INVALID
+
+Response:"""
+        
+        response = self.ollama.generate(
+            prompt,
+            system="You validate Python code. Output VALID, corrected code, or INVALID.",
+            temperature=0.1
+        )
+        
+        response_str = str(response) if not isinstance(response, str) else response
+        
+        if 'VALID' in response_str.upper() and 'INVALID' not in response_str.upper():
+            logger.debug(f"   │  │  ✓ Code validation passed")
+            return python_code
+        elif 'INVALID' in response_str.upper():
+            logger.warning(f"   │  │  ⚠️  Code validation failed - code is invalid")
+            return None
+        else:
+            # LLM provided corrected code
+            # Extract code block
+            code_match = re.search(r'```(?:python)?\n(.+?)\n```', response_str, re.DOTALL)
+            if code_match:
+                corrected = code_match.group(1).strip()
+                logger.info(f"   │  │  🔧 Code corrected by validator")
+                logger.debug(f"   │  │  Original: {python_code[:100]}...")
+                logger.debug(f"   │  │  Corrected: {corrected[:100]}...")
+                return corrected
+            else:
+                # Try to extract code without markers
+                corrected = response_str.strip()
+                if corrected and not corrected.startswith('VALID') and not corrected.startswith('INVALID'):
+                    logger.info(f"   │  │  🔧 Code corrected by validator")
+                    return corrected
+                else:
+                    logger.warning(f"   │  │  ⚠️  Could not extract corrected code")
+                    return python_code  # Return original if we can't parse correction
+    
     def _micro_find_tool(self, neuron_desc: str) -> Optional[Any]:
         """Micro-prompt: Which tool for this neuron?"""
+        
+        # Check if this is a counting/filtering task - MUST use Python tool
+        counting_keywords = ['count', 'how many', 'filter', 'where', 'matching', 'with type']
+        is_counting = any(kw in neuron_desc.lower() for kw in counting_keywords)
+        
+        # If counting/filtering, force executeDataAnalysis tool
+        if is_counting:
+            for tool in self.tools.list_tools():
+                if tool.name.lower() == 'executedataanalysis':
+                    logger.info(f"   │  │  🐍 Counting task detected, forcing Python tool: {tool.name}")
+                    return tool
         
         # Check if this is a formatting/display task (no tool needed)
         formatting_keywords = ['format', 'display', 'show', 'report', 'present', 'output', 'print', 'organize']
         has_format_keyword = any(kw in neuron_desc.lower() for kw in formatting_keywords)
         
-        # Check if this is an analysis/filtering task on existing data
-        analysis_keywords = ['count', 'filter', 'analyze', 'calculate', 'sum', 'average', 'where', 'matching', 'with type']
-        is_analysis = any(kw in neuron_desc.lower() for kw in analysis_keywords)
-        
-        # Check if task mentions working with existing/fetched/previous data
+        # Check if task mentions working with existing/fetched/previous data (for formatting only)
         works_with_existing = any(word in neuron_desc.lower() for word in [
             'existing', 'available', 'fetched', 'current results', 'all three', 
             'above', 'results', 'data', 'from previous', 'from fetched'
@@ -720,9 +841,9 @@ Output numbered list (1-4 steps, NO duplicates):"""
         
         has_context = len(self.context) > 0
         
-        # If it's about formatting/analyzing EXISTING data, use AI
-        if (has_format_keyword or is_analysis) and (works_with_existing or has_context):
-            logger.info(f"   │  │  💡 Detected formatting/analysis task on existing data, will use AI response")
+        # If it's about formatting EXISTING data (not counting), use AI
+        if has_format_keyword and (works_with_existing or has_context):
+            logger.info(f"   │  │  💡 Detected formatting task on existing data, will use AI response")
             return None
         
         # Intent-based matching with stronger signals
@@ -1275,6 +1396,20 @@ Answer yes or no:"""
         if len(neurons) == 1:
             return results[0]
         
+        # For counting questions, find the final count result
+        is_counting = any(word in goal.lower() for word in ['how many', 'count'])
+        if is_counting:
+            # Look for the last result that has a 'result' key with a number
+            for r in reversed(results):
+                if isinstance(r, dict) and 'result' in r and isinstance(r['result'], (int, float)):
+                    count = r['result']
+                    logger.info(f"📊 Found count result: {count}")
+                    return {
+                        'success': True,
+                        'count': int(count),
+                        'answer': f"{int(count)} activities"
+                    }
+        
         # Build summary of what each neuron did
         summary = "\n".join([
             f"Step {n.index + 1}: {n.description}\n  Result: {self._summarize_result(r)}"
@@ -1491,8 +1626,11 @@ Your answer:"""
                 # Handle write operations better
                 success_val = result['success']
                 if success_val is True or success_val == 'true':
+                    # Check for result key first (most specific)
+                    if 'result' in result:
+                        return f"Result: {result['result']}"
                     # Check for count or other indicators
-                    if 'count' in result:
+                    elif 'count' in result:
                         return f"Success: {result['count']} items"
                     elif 'activity_id' in result:
                         return f"Success: operation completed for activity {result['activity_id']}"

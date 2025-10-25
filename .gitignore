@@ -6,6 +6,7 @@
 state/*.db
 state/*.db-*
 logs/*.log
+state/data_cache/*.json
 
 # Python
 __pycache__/
