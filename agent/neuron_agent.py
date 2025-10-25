@@ -2034,9 +2034,17 @@ Your answer:"""
         
         response_str = str(response) if not isinstance(response, str) else response
         
+        # Clean up response - remove common artifacts
+        response_str = response_str.strip()
+        # Remove common garbage prefixes (single words followed by newline at start)
+        lines = response_str.split('\n', 1)
+        if len(lines) > 1 and len(lines[0].split()) == 1 and len(lines[0]) < 20:
+            # First line is a single short word - probably garbage
+            response_str = lines[1].strip()
+        
         return {
             'type': 'ai_response',
-            'answer': response_str.strip()
+            'answer': response_str
         }
     
     # ========================================================================
