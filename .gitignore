@@ -3,6 +3,8 @@
 
 # AI Agent specific
 .strava_cookies
+.strava_refresh_token
+.strava_token
 state/*.db
 state/*.db-*
 logs/*.log
