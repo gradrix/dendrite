@@ -1,13 +1,2 @@
 goal: |
   Get my first 3 Strava activities from January 2024 and show them in human-readable format.
-  
-  MANDATORY WORKFLOW:
-  1. Call getCurrentDateTime() - know what "today" is
-  2. Call dateToUnixTimestamp(2024, 1, 1) - get start of January 2024
-  3. Call dateToUnixTimestamp(2024, 2, 1) - get end of January 2024 (start of February)
-  4. Call validateTimestamp() on BOTH timestamps to verify they're correct
-  5. If validation shows warnings, STOP and report error
-  6. Use validated timestamps with getMyActivities (after= start, before= end)
-  7. Format results as human-readable text: "Activity 1: [name] - [kudos] kudos"
-  
-  DO NOT GUESS TIMESTAMPS! Use the date tools!

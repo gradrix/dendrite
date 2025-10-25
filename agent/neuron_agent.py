@@ -190,16 +190,24 @@ class NeuronAgent:
         """
         indent = '  ' * neuron.depth
         
-        # Pre-execution check: Does this neuron need to iterate over context data?
+        # Pre-execution check: Does this neuron need spawning?
         if neuron.depth < self.MAX_DEPTH - 1:
             logger.info(f"{indent}│  ├─ Checking for pre-execution spawning...")
             logger.info(f"{indent}│  │  Context keys: {list(self.context.keys())}")
+            
+            # Type 1: Iteration spawning ("for each activity")
             context_list = self._find_context_list_for_iteration(neuron.description)
             if context_list:
                 logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning (iterate over context)")
                 return self._spawn_dendrites_from_context(neuron, context_list, parent_goal)
-            else:
-                logger.info(f"{indent}│  │  No context list found for iteration")
+            
+            # Type 2: Multi-step spawning ("start AND end", "both X and Y")
+            subtasks = self._detect_multi_step_task(neuron.description)
+            if subtasks and len(subtasks) > 1:
+                logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning ({len(subtasks)} sub-tasks)")
+                return self._spawn_dendrites_for_subtasks(neuron, subtasks, parent_goal)
+            
+            logger.info(f"{indent}│  │  No spawning needed")
         
         for attempt in range(1, self.MAX_RETRIES + 1):
             logger.info(f"{indent}│  ├─ Attempt {attempt}/{self.MAX_RETRIES}")
@@ -445,6 +453,138 @@ class NeuronAgent:
         aggregated = self._micro_aggregate_dendrites(result, items, dendrite_results)
         return aggregated
     
+    def _detect_multi_step_task(self, neuron_desc: str) -> Optional[List[str]]:
+        """
+        Detect if this neuron requires multiple sub-tasks (e.g., "get start AND end timestamps").
+        
+        Returns list of sub-task descriptions if detected, None otherwise.
+        """
+        import re
+        
+        # Keywords that suggest multiple parallel tasks
+        multi_keywords = [
+            'start and end',
+            'both',
+            'and also',
+            'as well as',
+            'along with'
+        ]
+        
+        # Check if description mentions needing multiple things
+        desc_lower = neuron_desc.lower()
+        if not any(kw in desc_lower for kw in multi_keywords):
+            return None
+        
+        # CRITICAL: First check if there's a tool that can do this in one call
+        # Extract keywords for tool search
+        keywords = re.findall(r'\b\w{4,}\b', neuron_desc.lower())
+        
+        # Search for tools that match
+        relevant_tools = []
+        for tool in self.tools.list_tools():
+            tool_text = f"{tool.name} {tool.description}".lower()
+            score = sum(1 for kw in keywords if kw in tool_text)
+            if score > 2:  # Good match
+                relevant_tools.append((score, tool))
+        
+        if relevant_tools:
+            # Sort by score and check top tool
+            relevant_tools.sort(reverse=True, key=lambda x: x[0])
+            top_tool = relevant_tools[0][1]
+            
+            # If tool description mentions "start and end" or "both", it can handle this
+            if any(kw in top_tool.description.lower() for kw in ['start and end', 'both', 'range']):
+                logger.debug(f"   │  │  ✓ Found tool {top_tool.name} that handles multi-step task")
+                return None  # Don't spawn - let tool handle it
+        
+        # No suitable tool found, need to decompose
+        # Use LLM to decompose into ATOMIC sub-tasks
+        prompt = f"""Break this into ATOMIC sub-tasks that each call ONE tool.
+
+Task: {neuron_desc}
+
+IMPORTANT: Each sub-task must be ONE tool call (e.g., "Call dateToUnixTimestamp for January 1").
+Do NOT create tasks like "Parse January" - that's not a tool call.
+
+If this can be done with a SINGLE tool call, output "SINGLE_TASK".
+
+Output (numbered list of tool calls, or SINGLE_TASK):"""
+        
+        response = self.ollama.generate(
+            prompt,
+            system="Decompose into atomic tool calls. Each sub-task = ONE tool execution.",
+            temperature=0.1
+        )
+        
+        response_str = str(response) if not isinstance(response, str) else response
+        
+        if 'SINGLE_TASK' in response_str.upper():
+            return None
+        
+        # Extract numbered items
+        import re
+        subtasks = []
+        for match in re.finditer(r'^\d+\.\s*(.+)$', response_str, re.MULTILINE):
+            subtasks.append(match.group(1).strip())
+        
+        # Only return if we have 2-3 subtasks (not 5+)
+        if 2 <= len(subtasks) <= 3:
+            return subtasks
+        else:
+            logger.debug(f"   │  │  ⚠️  Too many subtasks ({len(subtasks)}), treating as single task")
+            return None
+    
+    def _spawn_dendrites_for_subtasks(self, parent_neuron: Neuron, subtasks: List[str], parent_goal: str) -> Any:
+        """
+        Spawn dendrites for multiple sub-tasks that need to be completed.
+        
+        Example: "Get start and end timestamps" spawns 2 dendrites:
+        - Dendrite 1: "Get start timestamp"
+        - Dendrite 2: "Get end timestamp"
+        """
+        indent = '  ' * parent_neuron.depth
+        logger.info(f"{indent}│  ├─ Sub-tasks:")
+        for i, task in enumerate(subtasks, 1):
+            logger.info(f"{indent}│  │  {i}. {task}")
+        
+        # Execute each sub-task
+        dendrite_results = []
+        for i, task_desc in enumerate(subtasks, 1):
+            logger.info(f"{indent}│  ├─ Sub-task {i}/{len(subtasks)}")
+            
+            # Create dendrite neuron
+            dendrite = Neuron(
+                description=task_desc,
+                index=i,
+                depth=parent_neuron.depth + 1
+            )
+            
+            # Execute recursively
+            dendrite_result = self.execute_goal(task_desc, depth=parent_neuron.depth + 1)
+            
+            dendrite.result = dendrite_result
+            parent_neuron.spawned_dendrites.append(dendrite)
+            dendrite_results.append(dendrite_result)
+        
+        logger.info(f"{indent}│  ╰─ All sub-tasks complete, aggregating")
+        
+        # Aggregate results from all sub-tasks
+        aggregated = {
+            'success': True,
+            'subtasks_completed': len(subtasks),
+            'results': dendrite_results
+        }
+        
+        # Merge specific fields if available (e.g., timestamps)
+        for result in dendrite_results:
+            if isinstance(result, dict):
+                # Merge timestamp fields
+                for key in ['after_unix', 'before_unix', 'unix_timestamp', 'start_timestamp', 'end_timestamp']:
+                    if key in result:
+                        aggregated[key] = result[key]
+        
+        return aggregated
+    
     # ========================================================================
     # Micro-Prompts (each 50-100 tokens)
     # ========================================================================
@@ -452,29 +592,43 @@ class NeuronAgent:
     def _micro_decompose(self, goal: str, depth: int) -> List[Neuron]:
         """Micro-prompt: Decompose goal into 1-4 neurons."""
         
-        prompt = f"""Break this goal into 1-4 simple steps.
+        prompt = f"""Break this goal into 1-4 simple steps. NO DUPLICATES.
 
 Goal: {goal}
 
 Rules:
 - Each step = ONE action (ONE tool call OR one AI response)
-- If goal asks "get X and convert Y", that's 2 steps
-- If goal asks "get X, convert Y, validate Z, report", that's 4 steps
-- Each action must be atomic and independent
+- If goal asks "how many X activities", that's typically: (1) convert dates, (2) fetch ALL activities, (3) filter/count matching X type
+- When fetching data, get ALL data first, then filter/analyze in a separate step
 - Format/display/report steps go at the end
+- NO DUPLICATE STEPS - each step must be different
+- IMPORTANT: If goal mentions a date period (like "January 2024", "September 2025", "last week"):
+  * First step: Convert date to timestamps (start and end)
+  * Second step: Fetch data using those timestamps
+  * Third step: Filter/count/analyze the fetched data (NO new fetch, work with existing data)
+  * Fourth step: Format results
+- If goal asks for a specific activity TYPE (e.g., "running activities", "rides"):
+  * The filtering step should say "Filter activities where type=Run" or "Count Run activities from fetched data"
+  * Do NOT fetch again - work with data from previous step
 
-Output (numbered list only):"""
+Examples:
+- "How many runs in Jan 2024?" → (1) Convert Jan 2024 to timestamps, (2) Fetch all activities, (3) Count where type=Run
+- "Show my 3 rides from last month" → (1) Convert last month to timestamps, (2) Fetch all activities, (3) Filter type=Ride and take first 3, (4) Format
+
+Output numbered list (1-4 steps, NO duplicates):"""
         
         response = self.ollama.generate(
             prompt,
-            system="Decompose goals into minimal steps. Output numbered list only.",
-            temperature=0.3
+            system="Decompose goals into minimal steps. NO duplicates. Output numbered list only.",
+            temperature=0.2  # Lower temperature for more deterministic output
         )
         
         response_str = str(response) if not isinstance(response, str) else response
         
         # Parse neurons
         neurons = []
+        seen_descriptions = set()  # Track to prevent duplicates
+        
         for line in response_str.split('\n'):
             line = line.strip()
             if not line:
@@ -483,11 +637,24 @@ Output (numbered list only):"""
             match = re.match(r'^[\d\-\*\.)\]]+\s*(.+)$', line)
             if match:
                 description = match.group(1).strip()
+                
+                # Check for duplicates (normalize text for comparison)
+                normalized = description.lower().strip('.')
+                if normalized in seen_descriptions:
+                    logger.warning(f"   │  ⚠️  Skipping duplicate neuron: {description}")
+                    continue
+                
+                seen_descriptions.add(normalized)
                 neurons.append(Neuron(
                     description=description,
                     index=len(neurons) + 1,
                     depth=depth
                 ))
+        
+        # Limit to 4 neurons maximum
+        if len(neurons) > 4:
+            logger.warning(f"   │  ⚠️  Too many neurons ({len(neurons)}), keeping first 4")
+            neurons = neurons[:4]
         
         return neurons
     
@@ -498,22 +665,69 @@ Output (numbered list only):"""
         formatting_keywords = ['format', 'display', 'show', 'report', 'present', 'output', 'print', 'organize']
         has_format_keyword = any(kw in neuron_desc.lower() for kw in formatting_keywords)
         
-        # If it's about formatting EXISTING data OR it's last neuron with context, use AI
-        is_formatting_existing = any(word in neuron_desc.lower() for word in ['existing', 'available', 'current results', 'all three', 'above', 'results', 'data'])
+        # Check if this is an analysis/filtering task on existing data
+        analysis_keywords = ['count', 'filter', 'analyze', 'calculate', 'sum', 'average', 'where', 'matching', 'with type']
+        is_analysis = any(kw in neuron_desc.lower() for kw in analysis_keywords)
+        
+        # Check if task mentions working with existing/fetched/previous data
+        works_with_existing = any(word in neuron_desc.lower() for word in [
+            'existing', 'available', 'fetched', 'current results', 'all three', 
+            'above', 'results', 'data', 'from previous', 'from fetched'
+        ])
+        
         has_context = len(self.context) > 0
         
-        if has_format_keyword and (is_formatting_existing or (has_context and 'human-readable' in neuron_desc.lower())):
-            logger.info(f"   │  │  💡 Detected formatting task, will use AI response")
+        # If it's about formatting/analyzing EXISTING data, use AI
+        if (has_format_keyword or is_analysis) and (works_with_existing or has_context):
+            logger.info(f"   │  │  💡 Detected formatting/analysis task on existing data, will use AI response")
             return None
         
-        # Extract keywords
-        keywords = re.findall(r'\b\w{4,}\b', neuron_desc.lower())
-        
-        # Search tools
+        # Intent-based matching with stronger signals
+        desc_lower = neuron_desc.lower()
         relevant_tools = []
+        
         for tool in self.tools.list_tools():
-            tool_text = f"{tool.name} {tool.description}".lower()
-            score = sum(1 for kw in keywords if kw in tool_text)
+            score = 0
+            tool_name_lower = tool.name.lower()
+            tool_desc_lower = tool.description.lower()
+            
+            # Strong intent signals (worth 10 points each)
+            intent_signals = {
+                'fetch.*activities': ['getmyactivities', 'getdashboardfeed'],
+                'get.*my.*activities': ['getmyactivities'],
+                'get.*strava.*activities': ['getmyactivities'],
+                'retrieve.*activities': ['getmyactivities', 'getdashboardfeed'],
+                'convert.*timestamp': ['datetounixtimestamp', 'getdaterangetimestamps'],
+                'start.*end.*timestamp': ['getdaterangetimestamps'],
+                'date.*range': ['getdaterangetimestamps'],
+                'give.*kudos': ['givekudos', 'givekudostoparticipants'],
+                'validate.*timestamp': ['validatetimestamp'],
+                'current.*date': ['getcurrentdatetime'],
+            }
+            
+            for pattern, matching_tools in intent_signals.items():
+                if re.search(pattern, desc_lower):
+                    if tool_name_lower in matching_tools:
+                        score += 10
+            
+            # Extract keywords for general matching (worth 1 point each)
+            keywords = re.findall(r'\b\w{4,}\b', desc_lower)
+            tool_text = f"{tool_name_lower} {tool_desc_lower}"
+            score += sum(1 for kw in keywords if kw in tool_text)
+            
+            # Boost for exact key phrase matches in description (worth 5 points)
+            key_phrases = {
+                'my activities': 'getmyactivities',
+                'my own': 'getmyactivities',
+                'strava activities': 'getmyactivities',
+                'friends activities': 'getdashboardfeed',
+                'dashboard feed': 'getdashboardfeed',
+            }
+            
+            for phrase, matching_tool in key_phrases.items():
+                if phrase in desc_lower and tool_name_lower == matching_tool:
+                    score += 5
+            
             if score > 0:
                 relevant_tools.append((score, tool))
         
@@ -524,7 +738,17 @@ Output (numbered list only):"""
         relevant_tools.sort(reverse=True, key=lambda x: x[0])
         top_tools = [t[1] for t in relevant_tools[:5]]
         
-        # Micro-prompt: Pick best
+        logger.debug(f"   │  │  Top tools: {[(t.name, s) for s, t in relevant_tools[:5]]}")
+        
+        # If top tool has significantly higher score, use it directly
+        if len(relevant_tools) >= 2:
+            top_score = relevant_tools[0][0]
+            second_score = relevant_tools[1][0]
+            if top_score >= second_score + 5:  # Clear winner
+                logger.debug(f"   │  │  ✓ Clear winner: {relevant_tools[0][1].name} (score {top_score} vs {second_score})")
+                return relevant_tools[0][1]
+        
+        # Otherwise, ask LLM to pick from top 5
         tool_list = "\n".join([f"- {t.name}: {t.description}" for t in top_tools])
         
         prompt = f"""Which tool is BEST for this?
@@ -595,6 +819,20 @@ Answer:"""
             for p in tool.parameters
         ])
         
+        # STEP 1: AUTO-MAP parameters from context (deterministic matching)
+        # Only auto-map if the tool ACTUALLY accepts these parameters
+        auto_mapped_params = {}
+        param_names = [p['name'] for p in tool.parameters]
+        
+        # Search context for exact parameter name matches (only for params this tool accepts)
+        for param_name in param_names:
+            for ctx_key, ctx_value in context.items():
+                # Direct key match in dict - tool accepts this param, context has it
+                if isinstance(ctx_value, dict) and param_name in ctx_value:
+                    auto_mapped_params[param_name] = ctx_value[param_name]
+                    logger.debug(f"   │  │  🔗 Auto-mapped {param_name} = {ctx_value[param_name]} from {ctx_key}")
+                    break
+        
         # Find dendrite item data in context (most relevant for current execution)
         dendrite_item = None
         for key, value in context.items():
@@ -602,20 +840,23 @@ Answer:"""
                 dendrite_item = value
                 break
         
-        # Build context info
+        # Build context info - show what we auto-mapped and what else is available
         context_info = ""
+        if auto_mapped_params:
+            context_info += f"\n\nAuto-mapped parameters (ALREADY SET - do not override):\n{json.dumps(auto_mapped_params, indent=2)}"
+        
         if dendrite_item:
             # Show the specific item we're processing
-            context_info = f"\n\nCurrent item data:\n{json.dumps(dendrite_item, indent=2)[:500]}"
+            context_info += f"\n\nCurrent item data:\n{json.dumps(dendrite_item, indent=2)[:500]}"
         elif context:
             # Show detailed data from previous steps with actual values
-            context_info = "\n\nData available from previous steps (use these values!):"
+            context_info += "\n\nData available from previous steps (use these values for remaining params!):"
             for key, value in list(context.items())[:5]:  # Show up to 5 items
                 # Show actual result data, not just summary
                 if isinstance(value, dict):
                     # For dicts, show relevant fields
                     relevant_fields = {}
-                    for field_key in ['unix_timestamp', 'timestamp', 'id', 'activity_id', 'success', 'human_readable', 'count', 'year', 'month']:
+                    for field_key in ['unix_timestamp', 'timestamp', 'id', 'activity_id', 'success', 'human_readable', 'count', 'year', 'month', 'after_unix', 'before_unix']:
                         if field_key in value:
                             relevant_fields[field_key] = value[field_key]
                     if relevant_fields:
@@ -635,19 +876,27 @@ Parameters needed:
 {param_info}
 {context_info}
 
-CRITICAL RULES:
-1. ALL REQUIRED parameters MUST be provided - do NOT return empty {{}}
-2. If previous steps returned data with fields like 'unix_timestamp', 'id', 'activity_id' - USE THOSE EXACT VALUES
-3. For validateTimestamp: 
-   - unix_timestamp comes from previous dateToUnixTimestamp result
-   - expected_description should describe the date (e.g., "January 2024")
-4. If task mentions a specific ID (like "activity 16242569491"), use that EXACT value
-5. If current item data is shown above, extract IDs from it (e.g., activity_id, athlete_id, id)
-6. Do NOT use fake/example values like 12345 or 1234567890
-7. Extract numeric values as integers, not strings
-8. Check REQUIRED field - those parameters CANNOT be omitted!
+CRITICAL RULES FOR PARAMETER EXTRACTION:
+1. If parameters are already auto-mapped (shown above), include them in your output
+2. For remaining REQUIRED parameters - extract from task description or context data
+3. ONLY use parameters that this tool actually accepts (check parameter list above)
+4. For date/time filtering (after_unix, before_unix): 
+   - Use these ONLY if the tool accepts them AND the task requires date filtering
+   - If task says "format" or "display" without mentioning dates, DON'T add date filters
+5. If task mentions extracting data from previous steps, look for it in context (e.g., "activities", "activity_id")
+6. Extract numeric values as integers, not strings
+7. Do NOT use fake/example values like 12345 or 1234567890
+8. Check the parameter list - if a parameter is not listed, do NOT include it
 
-EXAMPLE: If previous step (neuron_0_2) returned {{"unix_timestamp": 1704067200}}, and you need unix_timestamp parameter, use: {{"unix_timestamp": 1704067200, "expected_description": "January 2024"}}
+EXAMPLES:
+- Task: "Fetch activities from January 2024", auto-mapped: {{"after_unix": 1704067200, "before_unix": 1706745599}}
+  → Output: {{"after_unix": 1704067200, "before_unix": 1706745599, "per_page": 200}}
+
+- Task: "Format the activities", Tool params: [name, description], auto-mapped: {{"after_unix": 1704067200}}
+  → Output: {{}} (don't include after_unix - tool doesn't accept it!)
+
+- Task: "Get first 3 activities", context shows activities list
+  → Output: {{}} or {{"per_page": 3}} (depending on tool params)
 
 Output JSON only (no explanation):""".format(
             task=neuron_desc,
@@ -658,8 +907,8 @@ Output JSON only (no explanation):""".format(
         
         response = self.ollama.generate(
             prompt,
-            system="Provide parameters as JSON. Output only valid JSON.",
-            temperature=0.2
+            system="Provide parameters as JSON. Only include params the tool accepts. Output only valid JSON.",
+            temperature=0.1  # Lower temperature for more deterministic extraction
         )
         
         response_str = str(response) if not isinstance(response, str) else response
@@ -676,53 +925,59 @@ Output JSON only (no explanation):""".format(
                     logger.debug(f"   │  │  🔧 Unwrapping nested parameters structure")
                     params = params['parameters']
                 
-                # Clean up None values
-                params = {k: v for k, v in params.items() if v is not None}
+                # MERGE: Start with auto-mapped params, then overlay LLM-extracted ones
+                final_params = {**auto_mapped_params, **params}
+                
+                # VALIDATION: Filter out parameters the tool doesn't accept
+                valid_param_names = [p['name'] for p in tool.parameters]
+                invalid_params = [k for k in final_params.keys() if k not in valid_param_names]
+                if invalid_params:
+                    logger.debug(f"   │  │  🗑️  Removing invalid params: {invalid_params} (tool {tool.name} doesn't accept them)")
+                    final_params = {k: v for k, v in final_params.items() if k in valid_param_names}
+                
+                # Clean up None values (but keep auto-mapped values even if None)
+                final_params = {k: v for k, v in final_params.items() if v is not None or k in auto_mapped_params}
+                
+                # Clean up None values (but keep auto-mapped values even if None)
+                final_params = {k: v for k, v in final_params.items() if v is not None or k in auto_mapped_params}
                 
                 # Validate required parameters
                 required_params = [p['name'] for p in tool.parameters if p.get('required', False)]
-                missing_params = [p for p in required_params if p not in params or params[p] in [None, "", {}, []]]
+                missing_params = [p for p in required_params if p not in final_params or final_params[p] in [None, "", {}, []]]
                 
-                # Fallback: If LLM failed to extract params or missing required params, search context for values
-                if not params or missing_params:
-                    if missing_params:
-                        logger.debug(f"   │  │  ⚠️  Missing required parameters: {missing_params}, trying context search")
+                # Fallback: If still missing required params, search context for values
+                if missing_params:
+                    logger.debug(f"   │  │  ⚠️  Missing required parameters: {missing_params}, trying context search")
                     
                     # Search context for required param values
-                    for param_name in missing_params if missing_params else required_params:
+                    for param_name in missing_params:
                         # Look through all context for this param
                         for ctx_key, ctx_value in context.items():
                             if isinstance(ctx_value, dict) and param_name in ctx_value:
-                                params[param_name] = ctx_value[param_name]
-                                logger.debug(f"   │  │  ✓ Found {param_name} = {params[param_name]} in {ctx_key}")
+                                final_params[param_name] = ctx_value[param_name]
+                                logger.debug(f"   │  │  ✓ Found {param_name} = {final_params[param_name]} in {ctx_key}")
                                 break
                         
                         # Special handling for validateTimestamp
                         if tool.name == 'validateTimestamp':
-                            if param_name == 'unix_timestamp' and param_name not in params:
+                            if param_name == 'unix_timestamp' and param_name not in final_params:
                                 # Look for unix_timestamp in previous conversion result
                                 for ctx_value in context.values():
                                     if isinstance(ctx_value, dict) and 'unix_timestamp' in ctx_value:
-                                        params['unix_timestamp'] = ctx_value['unix_timestamp']
-                                        logger.debug(f"   │  │  ✓ Found unix_timestamp = {params['unix_timestamp']} from previous result")
+                                        final_params['unix_timestamp'] = ctx_value['unix_timestamp']
+                                        logger.debug(f"   │  │  ✓ Found unix_timestamp = {final_params['unix_timestamp']} from previous result")
                                         break
-                            
-                            if param_name == 'expected_description' and param_name not in params:
-                                # Extract from neuron description (e.g., "Validate the timestamp" → look at parent goal)
-                                if 'January 2024' in neuron_desc or 'january 2024' in neuron_desc.lower():
-                                    params['expected_description'] = 'January 2024'
-                                    logger.debug(f"   │  │  ✓ Extracted expected_description from task description")
-                    
-                    # Final fallback: regex extraction from neuron description
-                    if not params or missing_params:
-                        params_from_text = self._extract_params_from_text(neuron_desc, tool.parameters, dendrite_item)
-                        for key, value in params_from_text.items():
-                            if key not in params or params[key] in [None, "", {}, []]:
-                                params[key] = value
                 
-                return params
-            except:
-                pass
+                logger.debug(f"   │  │  📦 Final parameters: {final_params}")
+                return final_params
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"   │  │  ❌ Failed to parse parameters: {e}")
+                # Return auto-mapped params if JSON parsing failed
+                return auto_mapped_params if auto_mapped_params else {}
+        
+        # If no JSON match, return auto-mapped params
+        return auto_mapped_params if auto_mapped_params else {}
         
         # Final fallback: extract from text
         return self._extract_params_from_text(neuron_desc, tool.parameters, dendrite_item)

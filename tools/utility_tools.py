@@ -395,13 +395,89 @@ def getCurrentDateTime(timezone: str = "UTC") -> Dict[str, Any]:
 
 
 @tool(
+    description="Get start AND end Unix timestamps for a month/date range. Use this when you need BOTH start and end times (e.g., 'January 2024' returns Jan 1 00:00 AND Jan 31 23:59). Perfect for filtering activities in a date range.",
+    parameters=[
+        {"name": "year", "type": "int", "description": "Year (e.g., 2024)", "required": True},
+        {"name": "month", "type": "int", "description": "Month (1-12, e.g., 1 = January)", "required": True},
+        {"name": "end_year", "type": "int", "description": "Optional: End year (if different from start)", "required": False},
+        {"name": "end_month", "type": "int", "description": "Optional: End month (if different from start month). If omitted, uses same month as start.", "required": False},
+        {"name": "timezone", "type": "string", "description": "Always use 'UTC'", "required": False}
+    ],
+    returns="Dict with after_unix (start timestamp) and before_unix (end timestamp) - ready to use with Strava API",
+    permissions="read"
+)
+def getDateRangeTimestamps(year: int, month: int, end_year: int = None, end_month: int = None, timezone: str = "UTC") -> Dict[str, Any]:
+    """
+    Get both start and end Unix timestamps for a date range.
+    
+    Perfect for filtering activities by date range in Strava API.
+    Examples:
+    - "January 2024" → getDateRangeTimestamps(2024, 1) → returns start (Jan 1) and end (Jan 31 23:59:59)
+    - "January to March 2024" → getDateRangeTimestamps(2024, 1, end_month=3)
+    
+    Args:
+        year: Start year
+        month: Start month (1-12)
+        end_year: Optional end year (defaults to start year)
+        end_month: Optional end month (defaults to start month)
+        timezone: Timezone (default: UTC)
+    
+    Returns:
+        dict with:
+        - after_unix: Start timestamp (beginning of period)
+        - before_unix: End timestamp (end of period)
+        - start_human: Readable start date
+        - end_human: Readable end date
+    """
+    try:
+        from datetime import datetime, timezone as tz
+        from calendar import monthrange
+        
+        # Default end to same as start if not provided
+        if end_year is None:
+            end_year = year
+        if end_month is None:
+            end_month = month
+        
+        # Start: First day of start month at 00:00:00
+        start_dt = datetime(year, month, 1, 0, 0, 0, tzinfo=tz.utc)
+        
+        # End: Last day of end month at 23:59:59
+        last_day = monthrange(end_year, end_month)[1]  # Get last day of month
+        end_dt = datetime(end_year, end_month, last_day, 23, 59, 59, tzinfo=tz.utc)
+        
+        return {
+            "success": True,
+            "after_unix": int(start_dt.timestamp()),
+            "before_unix": int(end_dt.timestamp()),
+            "start_iso": start_dt.isoformat(),
+            "end_iso": end_dt.isoformat(),
+            "start_human": start_dt.strftime("%B %d, %Y %I:%M %p UTC"),
+            "end_human": end_dt.strftime("%B %d, %Y %I:%M %p UTC"),
+            "input": {
+                "year": year,
+                "month": month,
+                "end_year": end_year,
+                "end_month": end_month,
+                "timezone": "UTC"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get date range timestamps: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@tool(
     description="Convert human date to Unix timestamp WITHOUT GUESSING! Example: 'January 2024' = dateToUnixTimestamp(2024, 1, 1). Returns exact timestamp you can use with Strava API.",
     parameters=[
         {"name": "year", "type": "int", "description": "Year (e.g., 2024)", "required": True},
-        {"name": "month", "type": "int", "description": "Month 1-12 (1=January, 2=February, etc.)", "required": True},
-        {"name": "day", "type": "int", "description": "Day 1-31 (default: 1 for start of month)", "required": False},
-        {"name": "hour", "type": "int", "description": "Hour 0-23 (default: 0)", "required": False},
-        {"name": "minute", "type": "int", "description": "Minute 0-59 (default: 0)", "required": False},
+        {"name": "month", "type": "int", "description": "Month (1-12, e.g., 1 = January)", "required": True},
+        {"name": "day", "type": "int", "description": "Day (default: 1 = start of month)", "required": False},
+        {"name": "hour", "type": "int", "description": "Hour (default: 0)", "required": False},
+        {"name": "minute", "type": "int", "description": "Minute (default: 0)", "required": False},
         {"name": "timezone", "type": "string", "description": "Always use 'UTC'", "required": False}
     ],
     returns="Dict with unix_timestamp (use this!), iso_string, human_readable, and input echo",
