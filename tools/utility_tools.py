@@ -334,3 +334,280 @@ def listStateKeys() -> Dict[str, Any]:
             "error": str(e),
             "keys": []
         }
+
+
+# =============================================================================
+# DATE/TIME UTILITIES - Critical for preventing timestamp hallucination
+# =============================================================================
+
+@tool(
+    description="Get current date and time. ALWAYS call this FIRST before calculating timestamps to avoid hallucination! Returns current Unix timestamp, ISO string, and human-readable format.",
+    parameters=[
+        {"name": "timezone", "type": "string", "description": "Timezone (default: UTC). Use 'UTC' for consistency.", "required": False}
+    ],
+    returns="Current date/time with unix_timestamp, iso_string, human_readable, year, month, day components",
+    permissions="read"
+)
+def getCurrentDateTime(timezone: str = "UTC") -> Dict[str, Any]:
+    """
+    Get current date and time in multiple formats.
+    
+    ALWAYS call this FIRST before doing any date calculations!
+    This prevents hallucinating what "today" or "now" means.
+    
+    Args:
+        timezone: Timezone name (default: UTC)
+    
+    Returns:
+        dict with:
+        - unix_timestamp: Current Unix timestamp (seconds since 1970)
+        - iso_string: ISO 8601 format (e.g., "2024-01-15T10:30:00Z")
+        - human_readable: Easy to read format (e.g., "January 15, 2024 10:30 AM")
+        - date: Just the date (e.g., "2024-01-15")
+        - year, month, day, hour, minute, second: Individual components
+    """
+    try:
+        from datetime import datetime, timezone as tz
+        
+        # Use UTC (standard library doesn't support other timezones easily)
+        now = datetime.now(tz.utc)
+        
+        return {
+            "success": True,
+            "unix_timestamp": int(now.timestamp()),
+            "iso_string": now.isoformat(),
+            "human_readable": now.strftime("%B %d, %Y %I:%M %p UTC"),
+            "date": now.strftime("%Y-%m-%d"),
+            "year": now.year,
+            "month": now.month,
+            "day": now.day,
+            "hour": now.hour,
+            "minute": now.minute,
+            "second": now.second,
+            "timezone": "UTC"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get current date/time: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@tool(
+    description="Convert human date to Unix timestamp WITHOUT GUESSING! Example: 'January 2024' = dateToUnixTimestamp(2024, 1, 1). Returns exact timestamp you can use with Strava API.",
+    parameters=[
+        {"name": "year", "type": "int", "description": "Year (e.g., 2024)", "required": True},
+        {"name": "month", "type": "int", "description": "Month 1-12 (1=January, 2=February, etc.)", "required": True},
+        {"name": "day", "type": "int", "description": "Day 1-31 (default: 1 for start of month)", "required": False},
+        {"name": "hour", "type": "int", "description": "Hour 0-23 (default: 0)", "required": False},
+        {"name": "minute", "type": "int", "description": "Minute 0-59 (default: 0)", "required": False},
+        {"name": "timezone", "type": "string", "description": "Always use 'UTC'", "required": False}
+    ],
+    returns="Dict with unix_timestamp (use this!), iso_string, human_readable, and input echo",
+    permissions="read"
+)
+def dateToUnixTimestamp(year: int, month: int, day: int = 1, hour: int = 0, minute: int = 0, timezone: str = "UTC") -> Dict[str, Any]:
+    """
+    Convert a specific date to Unix timestamp.
+    
+    Use this instead of guessing timestamps! Example:
+    - "January 2024" → dateToUnixTimestamp(2024, 1, 1)
+    - "End of January 2024" → dateToUnixTimestamp(2024, 2, 1) - 1
+    
+    Args:
+        year: Year (e.g., 2024)
+        month: Month (1-12)
+        day: Day (default: 1 = start of month)
+        hour: Hour (default: 0)
+        minute: Minute (default: 0)
+        timezone: Timezone (default: UTC)
+    
+    Returns:
+        dict with:
+        - unix_timestamp: The Unix timestamp
+        - iso_string: ISO format
+        - human_readable: Readable format
+        - input: Echo of input parameters
+    """
+    try:
+        from datetime import datetime, timezone as tz
+        
+        # Create datetime in UTC
+        dt = datetime(year, month, day, hour, minute, 0, tzinfo=tz.utc)
+        
+        return {
+            "success": True,
+            "unix_timestamp": int(dt.timestamp()),
+            "iso_string": dt.isoformat(),
+            "human_readable": dt.strftime("%B %d, %Y %I:%M %p UTC"),
+            "input": {
+                "year": year,
+                "month": month,
+                "day": day,
+                "hour": hour,
+                "minute": minute,
+                "timezone": "UTC"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to convert date to timestamp: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "input": {
+                "year": year,
+                "month": month,
+                "day": day,
+                "hour": hour,
+                "minute": minute
+            }
+        }
+
+
+@tool(
+    description="Calculate timestamp for relative time like '30 days ago' or 'last week'. Prevents hallucination by using current time as reference.",
+    parameters=[
+        {"name": "days_ago", "type": "int", "description": "Days in past (e.g., 30 = 30 days ago)", "required": False},
+        {"name": "hours_ago", "type": "int", "description": "Hours in past", "required": False},
+        {"name": "weeks_ago", "type": "int", "description": "Weeks in past (e.g., 1 = last week)", "required": False},
+        {"name": "months_ago", "type": "int", "description": "Approximate months (30 days each)", "required": False}
+    ],
+    returns="Dict with unix_timestamp (use with Strava API), iso_string, human_readable, days_difference",
+    permissions="read"
+)
+def getRelativeTimestamp(days_ago: int = 0, hours_ago: int = 0, weeks_ago: int = 0, months_ago: int = 0) -> Dict[str, Any]:
+    """
+    Calculate timestamp for relative time periods.
+    
+    Examples:
+    - "Last 30 days" → getRelativeTimestamp(days_ago=30)
+    - "Last week" → getRelativeTimestamp(weeks_ago=1)
+    - "Last 3 months" → getRelativeTimestamp(months_ago=3)
+    
+    Args:
+        days_ago: Days in the past
+        hours_ago: Hours in the past
+        weeks_ago: Weeks in the past
+        months_ago: Months in the past (approximate, 30 days each)
+    
+    Returns:
+        dict with:
+        - unix_timestamp: The calculated timestamp
+        - iso_string: ISO format
+        - human_readable: Readable description
+        - days_difference: Total days calculated
+    """
+    try:
+        from datetime import datetime, timedelta
+        
+        # Calculate total offset
+        total_days = days_ago + (weeks_ago * 7) + (months_ago * 30)
+        total_hours = hours_ago
+        
+        # Get current time and subtract
+        now = datetime.now(timezone.utc)
+        past = now - timedelta(days=total_days, hours=total_hours)
+        
+        return {
+            "success": True,
+            "unix_timestamp": int(past.timestamp()),
+            "iso_string": past.isoformat(),
+            "human_readable": past.strftime("%B %d, %Y %I:%M %p UTC"),
+            "days_difference": total_days,
+            "calculation": f"{total_days} days and {total_hours} hours ago from now"
+        }
+    except Exception as e:
+        logger.error(f"Failed to calculate relative timestamp: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@tool(
+    description="Validate if Unix timestamp makes sense for expected date. CRITICAL: Use this to catch hallucinated timestamps! Checks if timestamp is reasonable (not future, not too old) and matches expected description.",
+    parameters=[
+        {"name": "unix_timestamp", "type": "int", "description": "Unix timestamp to validate", "required": True},
+        {"name": "expected_description", "type": "string", "description": "What timestamp should represent (e.g., 'January 2024', 'last 30 days')", "required": True}
+    ],
+    returns="Dict with is_valid (bool), warnings (list), human_readable (actual date), year, month, day. Check warnings!",
+    permissions="read"
+)
+def validateTimestamp(unix_timestamp: int, expected_description: str) -> Dict[str, Any]:
+    """
+    Validate if a timestamp makes sense.
+    
+    Use this to catch hallucinated timestamps! Example:
+    - You calculated timestamp for "January 2024"
+    - Call validateTimestamp(1704067200, "January 2024")
+    - Check if returned date matches what you expect
+    
+    Args:
+        unix_timestamp: The timestamp to validate
+        expected_description: Human description of what it should be
+    
+    Returns:
+        dict with:
+        - is_valid: Whether timestamp is reasonable (not in future, not too old)
+        - unix_timestamp: Echo of input
+        - human_readable: What the timestamp actually represents
+        - year, month, day: Components
+        - is_future: Whether it's in the future (BAD!)
+        - years_ago: How many years in the past
+        - expected: Echo of expected description
+    """
+    try:
+        from datetime import datetime
+        
+        # Convert timestamp to datetime
+        dt = datetime.fromtimestamp(unix_timestamp, tz=timezone.utc)
+        now = datetime.now(timezone.utc)
+        
+        # Calculate age
+        diff = now - dt
+        years_ago = diff.days / 365.25
+        is_future = diff.days < 0
+        
+        # Sanity checks
+        is_valid = True
+        warnings = []
+        
+        if is_future:
+            is_valid = False
+            warnings.append("⚠️ Timestamp is in the FUTURE!")
+        
+        if years_ago > 50:
+            is_valid = False
+            warnings.append(f"⚠️ Timestamp is {int(years_ago)} years ago (too old?)")
+        
+        # Check if month/year roughly matches description
+        if "january" in expected_description.lower() and dt.month != 1:
+            warnings.append(f"⚠️ Expected January, but got {dt.strftime('%B')}")
+        if "2024" in expected_description and dt.year != 2024:
+            warnings.append(f"⚠️ Expected 2024, but got {dt.year}")
+        
+        return {
+            "success": True,
+            "is_valid": is_valid,
+            "unix_timestamp": unix_timestamp,
+            "human_readable": dt.strftime("%B %d, %Y %I:%M %p UTC"),
+            "iso_string": dt.isoformat(),
+            "year": dt.year,
+            "month": dt.month,
+            "day": dt.day,
+            "is_future": is_future,
+            "years_ago": round(years_ago, 2),
+            "days_ago": diff.days,
+            "expected": expected_description,
+            "warnings": warnings
+        }
+    except Exception as e:
+        logger.error(f"Failed to validate timestamp: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "is_valid": False,
+            "unix_timestamp": unix_timestamp,
+            "expected": expected_description
+        }

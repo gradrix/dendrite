@@ -5,6 +5,7 @@ pyyaml>=6.0
 requests>=2.31.0
 APScheduler>=3.10.4
 python-dotenv>=1.0.0
+pytz>=2023.3  # Timezone support for date utilities
 
 # LLM integration
 # ollama (optional, we'll use requests directly)

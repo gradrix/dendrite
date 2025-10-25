@@ -66,8 +66,8 @@ class NeuronAgent:
     - Sequential execution (safer for LLM)
     """
     
-    MAX_DEPTH = 3  # Maximum recursion depth
-    MAX_RETRIES = 2  # Retries per neuron if validation fails
+    MAX_DEPTH = 5  # Maximum recursion depth
+    MAX_RETRIES = 3  # Retries per neuron if validation fails
     
     def __init__(
         self,
@@ -131,6 +131,42 @@ class NeuronAgent:
         logger.info(f"{'  ' * depth}╰─ Aggregate")
         final_result = self._micro_aggregate(goal, neurons, all_results)
         
+        # CRITICAL: Check if goal is actually complete
+        if depth == 0:  # Only validate at root level
+            logger.info(f"{'  ' * depth}╰─ Goal Completion Check")
+            is_complete = self._validate_goal_completion(goal, final_result)
+            
+            if not is_complete:
+                logger.warning(f"{'  ' * depth}   ⚠️  Goal may not be fully complete")
+                # Ask LLM what's missing
+                missing_info = self._check_what_is_missing(goal, final_result)
+                logger.info(f"{'  ' * depth}   📋 Missing: {missing_info}")
+                
+                # Auto-retry: Add a corrective neuron
+                logger.info(f"{'  ' * depth}   🔄 Adding corrective neuron...")
+                corrective_goal = self._generate_corrective_goal(goal, missing_info, final_result)
+                logger.info(f"{'  ' * depth}   🎯 Corrective goal: {corrective_goal}")
+                
+                # Execute corrective neuron
+                corrective_neuron = Neuron(
+                    description=corrective_goal,
+                    index=len(neurons) + 1,
+                    depth=depth
+                )
+                
+                try:
+                    corrective_result = self._execute_neuron(corrective_neuron, goal)
+                    logger.info(f"{'  ' * depth}   ✅ Corrective neuron complete")
+                    
+                    # Update final result with corrected output
+                    if isinstance(corrective_result, dict) and corrective_result.get('success'):
+                        final_result = corrective_result
+                        all_results.append(corrective_result)
+                    
+                except Exception as e:
+                    logger.error(f"{'  ' * depth}   ❌ Corrective neuron failed: {e}")
+
+        
         return {
             'success': True,
             'goal': goal,
@@ -177,18 +213,74 @@ class NeuronAgent:
             logger.info(f"{indent}│  ├─ Tool: {tool.name}")
             
             # Step 2: Determine parameters
-            params = self._micro_determine_params(neuron.description, tool, self.context)
-            logger.info(f"{indent}│  ├─ Params: {json.dumps(params)[:100]}")
+            try:
+                params = self._micro_determine_params(neuron.description, tool, self.context)
+            except Exception as param_error:
+                import traceback
+                logger.error(f"{indent}│  ❌ Parameter determination failed: {param_error}")
+                logger.info(f"{indent}│  Traceback:\n{traceback.format_exc()}")
+                raise
+            
+            try:
+                params_str = json.dumps(params)[:100]
+            except Exception as je:
+                params_str = str(params)[:100]
+            logger.info(f"{indent}│  ├─ Params: {params_str}")
             
             # Step 3: Execute tool
             try:
                 result = tool.execute(**params)
                 logger.info(f"{indent}│  ├─ Result: {self._summarize_result(result)}")
             except Exception as e:
-                logger.warning(f"{indent}│  │  ⚠️  Execution error: {e}")
-                if attempt == self.MAX_RETRIES:
-                    raise
-                continue
+                import traceback
+                error_msg = str(e)
+                logger.warning(f"{indent}│  │  ⚠️  Execution error: {error_msg}")
+                logger.debug(f"{indent}│  │  Traceback: {traceback.format_exc()}")
+                
+                # ERROR REFLECTION: Ask LLM what went wrong
+                if "404" in error_msg or "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
+                    logger.info(f"{indent}│  │  🔍 Reflecting on error - likely hallucinated parameter")
+                    
+                    reflection = self._reflect_on_error(
+                        neuron_desc=neuron.description,
+                        tool_name=tool.name,
+                        params=params,
+                        error=error_msg,
+                        context=self.context
+                    )
+                    
+                    logger.info(f"{indent}│  │  💡 Reflection: {reflection.get('diagnosis', 'Unknown')}")
+                    
+                    # If reflection suggests parameter fix, try it
+                    if reflection.get('suggested_fix'):
+                        logger.info(f"{indent}│  │  🔧 Applying suggested fix...")
+                        suggested_params = reflection.get('suggested_params', {})
+                        if suggested_params:
+                            try:
+                                logger.info(f"{indent}│  │  🔄 Retry with: {json.dumps(suggested_params)[:100]}")
+                                result = tool.execute(**suggested_params)
+                                logger.info(f"{indent}│  ├─ Result: {self._summarize_result(result)}")
+                                # Success! Continue with validation
+                            except Exception as retry_error:
+                                logger.warning(f"{indent}│  │  ❌ Suggested fix failed: {retry_error}")
+                                if attempt == self.MAX_RETRIES:
+                                    raise
+                                continue
+                        else:
+                            # No suggested params, retry from scratch
+                            if attempt == self.MAX_RETRIES:
+                                raise
+                            continue
+                    else:
+                        # No fix suggested, retry
+                        if attempt == self.MAX_RETRIES:
+                            raise
+                        continue
+                else:
+                    # Not a 404 error, just retry
+                    if attempt == self.MAX_RETRIES:
+                        raise
+                    continue
             
             # Step 4: Detect list → spawn dendrites
             if neuron.depth < self.MAX_DEPTH - 1:  # Leave room for one more level
@@ -358,17 +450,18 @@ class NeuronAgent:
     # ========================================================================
     
     def _micro_decompose(self, goal: str, depth: int) -> List[Neuron]:
-        """Micro-prompt: Decompose goal into 1-2 neurons."""
+        """Micro-prompt: Decompose goal into 1-4 neurons."""
         
-        prompt = f"""Break this goal into 1-2 simple steps.
+        prompt = f"""Break this goal into 1-4 simple steps.
 
 Goal: {goal}
 
 Rules:
-- Prefer 1 step if possible
-- Use 2 steps only if you must chain actions
-- Each step = ONE tool call
-- Don't add format/compile steps
+- Each step = ONE action (ONE tool call OR one AI response)
+- If goal asks "get X and convert Y", that's 2 steps
+- If goal asks "get X, convert Y, validate Z, report", that's 4 steps
+- Each action must be atomic and independent
+- Format/display/report steps go at the end
 
 Output (numbered list only):"""
         
@@ -400,6 +493,18 @@ Output (numbered list only):"""
     
     def _micro_find_tool(self, neuron_desc: str) -> Optional[Any]:
         """Micro-prompt: Which tool for this neuron?"""
+        
+        # Check if this is a formatting/display task (no tool needed)
+        formatting_keywords = ['format', 'display', 'show', 'report', 'present', 'output', 'print', 'organize']
+        has_format_keyword = any(kw in neuron_desc.lower() for kw in formatting_keywords)
+        
+        # If it's about formatting EXISTING data OR it's last neuron with context, use AI
+        is_formatting_existing = any(word in neuron_desc.lower() for word in ['existing', 'available', 'current results', 'all three', 'above', 'results', 'data'])
+        has_context = len(self.context) > 0
+        
+        if has_format_keyword and (is_formatting_existing or (has_context and 'human-readable' in neuron_desc.lower())):
+            logger.info(f"   │  │  💡 Detected formatting task, will use AI response")
+            return None
         
         # Extract keywords
         keywords = re.findall(r'\b\w{4,}\b', neuron_desc.lower())
@@ -503,28 +608,53 @@ Answer:"""
             # Show the specific item we're processing
             context_info = f"\n\nCurrent item data:\n{json.dumps(dendrite_item, indent=2)[:500]}"
         elif context:
-            # Show summary of available data
-            context_info = "\n\nAvailable data from previous steps:"
-            for key, value in list(context.items())[:3]:  # Limit to 3 to avoid token overflow
-                summary = self._summarize_result(value)
-                context_info += f"\n  - {key}: {summary}"
+            # Show detailed data from previous steps with actual values
+            context_info = "\n\nData available from previous steps (use these values!):"
+            for key, value in list(context.items())[:5]:  # Show up to 5 items
+                # Show actual result data, not just summary
+                if isinstance(value, dict):
+                    # For dicts, show relevant fields
+                    relevant_fields = {}
+                    for field_key in ['unix_timestamp', 'timestamp', 'id', 'activity_id', 'success', 'human_readable', 'count', 'year', 'month']:
+                        if field_key in value:
+                            relevant_fields[field_key] = value[field_key]
+                    if relevant_fields:
+                        context_info += f"\n  - {key}: {json.dumps(relevant_fields)}"
+                    else:
+                        summary = self._summarize_result(value)
+                        context_info += f"\n  - {key}: {summary}"
+                else:
+                    context_info += f"\n  - {key}: {value}"
         
-        prompt = f"""Extract parameters from the task description and available data.
+        prompt = """Extract parameters from the task description and available data.
 
-Task: {neuron_desc}
-Tool: {tool.name}
+Task: {task}
+Tool: {tool_name}
 
 Parameters needed:
 {param_info}
 {context_info}
 
 CRITICAL RULES:
-1. If task mentions a specific ID (like "activity 16242569491"), use that EXACT value
-2. If current item data is shown above, extract IDs from it (e.g., activity_id, athlete_id, id)
-3. Do NOT use fake/example values like 12345
-4. Extract numeric IDs as integers, not strings
+1. ALL REQUIRED parameters MUST be provided - do NOT return empty {{}}
+2. If previous steps returned data with fields like 'unix_timestamp', 'id', 'activity_id' - USE THOSE EXACT VALUES
+3. For validateTimestamp: 
+   - unix_timestamp comes from previous dateToUnixTimestamp result
+   - expected_description should describe the date (e.g., "January 2024")
+4. If task mentions a specific ID (like "activity 16242569491"), use that EXACT value
+5. If current item data is shown above, extract IDs from it (e.g., activity_id, athlete_id, id)
+6. Do NOT use fake/example values like 12345 or 1234567890
+7. Extract numeric values as integers, not strings
+8. Check REQUIRED field - those parameters CANNOT be omitted!
 
-Output JSON only (no explanation):"""
+EXAMPLE: If previous step (neuron_0_2) returned {{"unix_timestamp": 1704067200}}, and you need unix_timestamp parameter, use: {{"unix_timestamp": 1704067200, "expected_description": "January 2024"}}
+
+Output JSON only (no explanation):""".format(
+            task=neuron_desc,
+            tool_name=tool.name,
+            param_info=param_info,
+            context_info=context_info
+        )
         
         response = self.ollama.generate(
             prompt,
@@ -539,11 +669,56 @@ Output JSON only (no explanation):"""
         if json_match:
             try:
                 params = json.loads(json_match.group())
+                
+                # FIX: Sometimes LLM wraps params in {"tool": "X", "parameters": {...}}
+                # Extract the actual parameters if this happens
+                if isinstance(params, dict) and 'parameters' in params and 'tool' in params:
+                    logger.debug(f"   │  │  🔧 Unwrapping nested parameters structure")
+                    params = params['parameters']
+                
+                # Clean up None values
                 params = {k: v for k, v in params.items() if v is not None}
                 
-                # Fallback: If LLM failed to extract params, try regex on neuron description
-                if not params or all(v in [None, "", {}, []] for v in params.values()):
-                    params = self._extract_params_from_text(neuron_desc, tool.parameters, dendrite_item)
+                # Validate required parameters
+                required_params = [p['name'] for p in tool.parameters if p.get('required', False)]
+                missing_params = [p for p in required_params if p not in params or params[p] in [None, "", {}, []]]
+                
+                # Fallback: If LLM failed to extract params or missing required params, search context for values
+                if not params or missing_params:
+                    if missing_params:
+                        logger.debug(f"   │  │  ⚠️  Missing required parameters: {missing_params}, trying context search")
+                    
+                    # Search context for required param values
+                    for param_name in missing_params if missing_params else required_params:
+                        # Look through all context for this param
+                        for ctx_key, ctx_value in context.items():
+                            if isinstance(ctx_value, dict) and param_name in ctx_value:
+                                params[param_name] = ctx_value[param_name]
+                                logger.debug(f"   │  │  ✓ Found {param_name} = {params[param_name]} in {ctx_key}")
+                                break
+                        
+                        # Special handling for validateTimestamp
+                        if tool.name == 'validateTimestamp':
+                            if param_name == 'unix_timestamp' and param_name not in params:
+                                # Look for unix_timestamp in previous conversion result
+                                for ctx_value in context.values():
+                                    if isinstance(ctx_value, dict) and 'unix_timestamp' in ctx_value:
+                                        params['unix_timestamp'] = ctx_value['unix_timestamp']
+                                        logger.debug(f"   │  │  ✓ Found unix_timestamp = {params['unix_timestamp']} from previous result")
+                                        break
+                            
+                            if param_name == 'expected_description' and param_name not in params:
+                                # Extract from neuron description (e.g., "Validate the timestamp" → look at parent goal)
+                                if 'January 2024' in neuron_desc or 'january 2024' in neuron_desc.lower():
+                                    params['expected_description'] = 'January 2024'
+                                    logger.debug(f"   │  │  ✓ Extracted expected_description from task description")
+                    
+                    # Final fallback: regex extraction from neuron description
+                    if not params or missing_params:
+                        params_from_text = self._extract_params_from_text(neuron_desc, tool.parameters, dendrite_item)
+                        for key, value in params_from_text.items():
+                            if key not in params or params[key] in [None, "", {}, []]:
+                                params[key] = value
                 
                 return params
             except:
@@ -746,6 +921,16 @@ Output template (use {{field_name}} for placeholders):"""
         
         result_summary = self._summarize_result(result)
         
+        # Check for explicit success/error indicators
+        if isinstance(result, dict):
+            # Write operations: success=True means valid
+            if 'success' in result:
+                return result['success'] is True or result['success'] == 'true'
+            # Explicit errors are invalid
+            if 'error' in result:
+                return False
+        
+        # For read operations, ask LLM to validate
         prompt = f"""Is this result valid for the goal?
 
 Parent goal: {parent_goal}
@@ -756,6 +941,7 @@ Valid if:
 - No error occurred
 - Returned data matches what was requested
 - Makes progress toward parent goal
+- For write operations: "Success: operation completed" means VALID
 
 Answer yes or no:"""
         
@@ -819,18 +1005,30 @@ Output a combined summary (2-3 sentences):"""
         return parent_result
     
     def _micro_ai_response(self, neuron_desc: str) -> Dict[str, Any]:
-        """Fallback: Use AI to answer directly."""
+        """Fallback: Use AI to answer directly using context data."""
         
-        prompt = f"""Answer this directly (no tools available):
+        # Build context summary
+        context_summary = ""
+        if self.context:
+            context_summary = "\n\nAvailable data:"
+            for key, value in list(self.context.items())[:10]:
+                if isinstance(value, dict):
+                    # Show the actual data
+                    context_summary += f"\n  {key}: {json.dumps(value, indent=2)[:300]}"
+                else:
+                    context_summary += f"\n  {key}: {value}"
+        
+        prompt = f"""Answer this task using the available data (no tools available):
 
-{neuron_desc}
+Task: {neuron_desc}
+{context_summary}
 
-Provide a brief, helpful response:"""
+Provide a clear, formatted response:"""
         
         response = self.ollama.generate(
             prompt,
-            system="Answer questions directly and concisely.",
-            temperature=0.5
+            system="Answer tasks directly using provided data. Format responses clearly.",
+            temperature=0.3
         )
         
         response_str = str(response) if not isinstance(response, str) else response
@@ -875,7 +1073,18 @@ Provide a brief, helpful response:"""
             if 'entries' in result:
                 return f"{len(result['entries'])} entries"
             if 'success' in result:
-                return f"Success: {result.get('count', '?')} items"
+                # Handle write operations better
+                success_val = result['success']
+                if success_val is True or success_val == 'true':
+                    # Check for count or other indicators
+                    if 'count' in result:
+                        return f"Success: {result['count']} items"
+                    elif 'activity_id' in result:
+                        return f"Success: operation completed for activity {result['activity_id']}"
+                    else:
+                        return "Success: operation completed"
+                else:
+                    return f"Failed: {result.get('error', 'Unknown error')}"
             return f"{len(result)} fields"
         elif isinstance(result, list):
             return f"{len(result)} items"
@@ -885,3 +1094,277 @@ Provide a brief, helpful response:"""
     def _log(self, message: str):
         """Add to execution log for debugging."""
         self.execution_log.append(message)
+    
+    def _validate_goal_completion(self, goal: str, result: Any) -> bool:
+        """Validate if the goal has been fully completed."""
+        
+        result_summary = self._summarize_result_for_validation(result)
+        
+        # Check if goal explicitly asks for formatting/display
+        format_keywords = ['show', 'display', 'report', 'summary', 'list', 'format', 'readable', 'human-readable']
+        needs_formatting = any(keyword in goal.lower() for keyword in format_keywords)
+        
+        # Check if result is raw data structure
+        # Look in top level OR in detailed_results
+        def contains_raw_data(obj):
+            if isinstance(obj, dict):
+                # Check top level
+                if any(key in obj for key in ['activities', 'entries']):
+                    return True
+                # Check nested detailed_results
+                if 'detailed_results' in obj:
+                    detailed = obj['detailed_results']
+                    if isinstance(detailed, list):
+                        # Check if there's at least one AI response in the list
+                        has_ai_response = any(
+                            isinstance(item, dict) and item.get('type') == 'ai_response' 
+                            for item in detailed
+                        )
+                        # If there's an AI response, consider it formatted
+                        if has_ai_response:
+                            return False
+                        return any(contains_raw_data(item) for item in detailed)
+                    else:
+                        return contains_raw_data(detailed)
+            return False
+        
+        is_raw_data = contains_raw_data(result)
+        
+        # Determine result type for validation
+        if is_raw_data:
+            result_type = f"⚠️ RAW DATA STRUCTURE (contains API response fields)"
+        elif isinstance(result, str):
+            result_type = "✅ HUMAN-READABLE TEXT (string)"
+        elif isinstance(result, dict) and 'summary' in result:
+            # Check if summary is descriptive text or just a confirmation
+            summary = result.get('summary', '')
+            if isinstance(summary, str) and len(summary) > 100:
+                result_type = "✅ FORMATTED SUMMARY (contains descriptive text)"
+            else:
+                result_type = "⚠️ SUMMARY TOO SHORT (not human-readable report)"
+        else:
+            result_type = f"❓ UNKNOWN TYPE: {type(result).__name__}"
+        
+        prompt = f"""Has this goal been FULLY completed?
+
+Goal: {goal}
+
+Result Type: {result_type}
+
+Result summary:
+{result_summary}
+
+Requirements for "FULLY completed":
+1. All data requested in the goal is present ✓
+2. Data is in the format requested
+3. No partial results or missing fields
+4. If goal asked for "show", "display", "report", or "summary", the output MUST be human-readable text (not raw JSON/dict with API fields like 'activities', 'success', 'count')
+
+CRITICAL FORMAT CHECK:
+- Goal requires formatting? {'YES - Must be human-readable text' if needs_formatting else 'NO - Any format OK'}
+- Result is raw data? {'YES - This is NOT acceptable for formatted output!' if is_raw_data else 'NO - Format is OK'}
+
+❌ REJECT if goal needs formatting but result is raw data!
+
+Answer (YES or NO only):"""
+        
+        response = self.ollama.generate(
+            prompt,
+            system="You are a strict validator. If goal requires human-readable output (show/display/report) but result type is RAW DATA STRUCTURE, you MUST answer NO.",
+            temperature=0.1
+        )
+        
+        response_str = str(response) if not isinstance(response, str) else response
+        is_complete = 'yes' in response_str.lower()
+        
+        if is_complete:
+            logger.info(f"   ✅ Goal validation passed: Complete")
+        else:
+            logger.warning(f"   ⚠️  Goal validation failed: Incomplete")
+        
+        return is_complete
+    
+    def _check_what_is_missing(self, goal: str, result: Any) -> str:
+        """Determine what is missing from the goal completion."""
+        
+        result_summary = self._summarize_result_for_validation(result)
+        
+        prompt = f"""What is missing or wrong with this result?
+
+Goal: {goal}
+
+Current result:
+{result_summary}
+
+Identify what's missing or needs to be fixed:
+- Missing data fields?
+- Wrong format?
+- Not human-readable when it should be?
+- Partial results?
+
+Be specific and concise (1-2 sentences):"""
+        
+        response = self.ollama.generate(
+            prompt,
+            system="Identify what's missing to complete the goal. Be specific.",
+            temperature=0.2
+        )
+        
+        response_str = str(response) if not isinstance(response, str) else response
+        return response_str.strip()
+    
+    def _reflect_on_error(self, neuron_desc: str, tool_name: str, params: Dict, error: str, context: Dict) -> Dict:
+        """
+        Reflect on tool execution error to diagnose the problem.
+        Returns diagnosis and suggested fix if available.
+        """
+        # Summarize context
+        context_summary = []
+        for key, value in context.items():
+            if isinstance(value, list):
+                context_summary.append(f"- {key}: list of {len(value)} items")
+                if value and isinstance(value[0], dict):
+                    sample_keys = list(value[0].keys())[:3]
+                    context_summary.append(f"  Sample keys: {sample_keys}")
+            elif isinstance(value, dict):
+                sample_keys = list(value.keys())[:3]
+                context_summary.append(f"- {key}: dict with keys {sample_keys}")
+            else:
+                context_summary.append(f"- {key}: {str(value)[:50]}")
+        
+        context_str = '\n'.join(context_summary) if context_summary else "No context available"
+        
+        prompt = f"""A tool execution failed. Diagnose what went wrong.
+
+Neuron Goal: {neuron_desc}
+Tool Called: {tool_name}
+Parameters Used: {json.dumps(params, indent=2)}
+Error: {error}
+
+Available Context Data:
+{context_str}
+
+Common Issues:
+1. Hallucinated ID: Parameter uses made-up ID instead of actual ID from context
+2. Wrong parameter type: String instead of int, etc.
+3. Missing required parameter
+4. Wrong parameter extracted from context
+
+Provide:
+1. diagnosis: What went wrong (1 sentence)
+2. suggested_fix: Brief description of fix (if available)
+3. suggested_params: Corrected parameters (JSON, if applicable)
+
+Response format (JSON):
+{{"diagnosis": "...", "suggested_fix": "...", "suggested_params": {{...}} }}"""
+        
+        response = self.ollama.generate(
+            prompt,
+            system="Diagnose tool execution errors and suggest fixes. Focus on parameter issues.",
+            temperature=0.2
+        )
+        
+        response_str = str(response) if not isinstance(response, str) else response
+        
+        # Parse JSON response
+        try:
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response_str, re.DOTALL)
+            if json_match:
+                reflection = json.loads(json_match.group())
+                return reflection
+        except Exception as e:
+            logger.warning(f"Failed to parse reflection: {e}")
+        
+        return {"diagnosis": response_str.strip(), "suggested_fix": None, "suggested_params": None}
+    
+    def _generate_corrective_goal(self, original_goal: str, missing_info: str, current_result: Any) -> str:
+        """Generate a corrective goal to fix what's missing."""
+        
+        result_summary = self._summarize_result_for_validation(current_result)
+        
+        prompt = f"""Create a corrective step to complete this goal.
+
+Original goal: {original_goal}
+
+What's missing: {missing_info}
+
+Current data available:
+{result_summary}
+
+CRITICAL RULES:
+1. The data is ALREADY FETCHED - don't fetch again
+2. Only format/transform what's already there
+3. Use phrases like "Format the existing", "Display the current", "Transform the available"
+4. Do NOT use "extract", "get", "retrieve", "fetch" - data is already here!
+
+Examples (GOOD):
+- "Format the existing activities data into a readable summary with name, type, and kudos count"
+- "Display the current results in a human-readable report"
+- "Transform the available activity list into a summary report showing name, type, and kudos"
+
+Examples (BAD - will trigger re-fetching):
+- "Extract name, type, kudos from each activity" ❌
+- "Get activity details for each item" ❌
+- "Retrieve kudos count for activities" ❌
+
+Corrective step (use ONLY formatting/display verbs):"""
+        
+        response = self.ollama.generate(
+            prompt,
+            system="Generate a FORMATTING-ONLY corrective step. Data is already available. Do NOT use extraction verbs.",
+            temperature=0.2
+        )
+        
+        response_str = str(response) if not isinstance(response, str) else response
+        return response_str.strip().split('\n')[0]  # Take first line only
+    
+    def _summarize_result_for_validation(self, result: Any, max_length: int = 500) -> str:
+        """Summarize result for validation (more detailed than logging summary)."""
+        if isinstance(result, dict):
+            # Show structure and sample data
+            summary_parts = []
+            
+            if 'final' in result:
+                # This is a nested result from execute_goal
+                return self._summarize_result_for_validation(result['final'], max_length)
+            
+            if 'error' in result:
+                return f"Error: {result['error']}"
+            
+            if 'success' in result:
+                summary_parts.append(f"Status: {'Success' if result.get('success') else 'Failed'}")
+            
+            if 'count' in result:
+                summary_parts.append(f"Count: {result['count']}")
+            
+            if 'activities' in result:
+                activities = result['activities']
+                if activities and len(activities) > 0:
+                    sample = activities[0]
+                    fields = list(sample.keys())
+                    summary_parts.append(f"Activities: {len(activities)} items")
+                    summary_parts.append(f"Fields: {', '.join(fields[:10])}")
+                    # Show first activity sample
+                    if 'name' in sample:
+                        summary_parts.append(f"Sample: {sample.get('name')} ({sample.get('type')}) - {sample.get('kudos_count', 0)} kudos")
+            
+            if 'entries' in result:
+                entries = result['entries']
+                summary_parts.append(f"Entries: {len(entries)} items")
+            
+            result_str = "\n".join(summary_parts)
+            if len(result_str) > max_length:
+                return result_str[:max_length] + "..."
+            return result_str
+            
+        elif isinstance(result, list):
+            if len(result) > 0:
+                sample = result[0]
+                return f"List: {len(result)} items, sample: {str(sample)[:200]}"
+            return f"Empty list"
+        else:
+            result_str = str(result)
+            if len(result_str) > max_length:
+                return result_str[:max_length] + "..."
+            return result_str
