@@ -2388,6 +2388,10 @@ Corrective step (use ONLY formatting/display verbs):"""
                 # This is a nested result from execute_goal
                 return self._summarize_result_for_validation(result['final'], max_length)
             
+            # Check for formatted summary first (from aggregation)
+            if 'summary' in result and isinstance(result['summary'], str) and len(result['summary']) > 0:
+                return result['summary'][:max_length]
+            
             if 'error' in result:
                 return f"Error: {result['error']}"
             
