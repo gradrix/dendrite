@@ -1727,20 +1727,27 @@ Answer yes or no:"""
         # Collect all successful formatting results
         formatting_results = []
         for neuron, result in zip(reversed(neurons), reversed(results)):
-            is_formatting = any(kw in neuron.description.lower() for kw in formatting_keywords)
-            if not is_formatting:
-                continue
-            
             logger.info(f"   Checking neuron {neuron.index}: {neuron.description[:50]}...")
-                
+            
+            # Check result type first - if it's a string result from executeDataAnalysis, it's likely formatting
+            found_result = False
+            
             # Check for AI response type
             if isinstance(result, dict) and result.get('type') == 'ai_response':
                 formatting_results.append((neuron.index, result.get('answer', ''), 'ai'))
                 logger.info(f"   ✅ Found AI response")
+                found_result = True
             # Check for executeDataAnalysis result with string output
             elif isinstance(result, dict) and result.get('success') and 'result' in result and isinstance(result['result'], str):
                 formatting_results.append((neuron.index, result['result'], 'python'))
                 logger.info(f"   ✅ Found Python result with {len(result['result'].split(chr(10)))} lines")
+                found_result = True
+            
+            # If no result found, check if description suggests formatting
+            if not found_result:
+                is_formatting = any(kw in neuron.description.lower() for kw in formatting_keywords)
+                if is_formatting:
+                    logger.info(f"   ⚠️ Formatting keywords found but no string result")
         
         logger.info(f"📋 Found {len(formatting_results)} formatting results total")
         
