@@ -1712,26 +1712,27 @@ Answer yes or no:"""
         if len(neurons) == 1:
             return results[0]
         
-        # Check if the last neuron was a formatting task that produced an AI response
-        # If so, use that directly - it already has the formatted answer!
-        last_neuron = neurons[-1]
-        last_result = results[-1]
+        # Scan backwards to find ANY successful formatting result (not just the last)
+        # This handles cases where a formatting neuron succeeded but later neurons failed
         formatting_keywords = ['format', 'report', 'present', 'show', 'display', 'human-readable']
-        is_formatting = any(kw in last_neuron.description.lower() for kw in formatting_keywords)
         
-        if is_formatting:
+        for neuron, result in zip(reversed(neurons), reversed(results)):
+            is_formatting = any(kw in neuron.description.lower() for kw in formatting_keywords)
+            if not is_formatting:
+                continue
+                
             # Check for AI response type
-            if isinstance(last_result, dict) and last_result.get('type') == 'ai_response':
-                logger.info(f"📝 Using formatted answer from final neuron (AI response)")
+            if isinstance(result, dict) and result.get('type') == 'ai_response':
+                logger.info(f"📝 Using formatted answer from neuron {neuron.index} (AI response)")
                 return {
-                    'summary': last_result.get('answer', ''),
+                    'summary': result.get('answer', ''),
                     'detailed_results': results
                 }
             # Check for executeDataAnalysis result with string output
-            elif isinstance(last_result, dict) and 'result' in last_result and isinstance(last_result['result'], str):
-                logger.info(f"📝 Using formatted answer from final neuron (Python result)")
+            elif isinstance(result, dict) and result.get('success') and 'result' in result and isinstance(result['result'], str):
+                logger.info(f"📝 Using formatted answer from neuron {neuron.index} (Python result)")
                 return {
-                    'summary': last_result['result'],
+                    'summary': result['result'],
                     'detailed_results': results
                 }
         
