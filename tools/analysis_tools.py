@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 @tool(
     name="executeDataAnalysis",
-    description="Execute Python code for 100% accurate counting, filtering, and analysis. CRITICAL: Use this for ANY counting task (even 'how many' questions) - AI models miscount, Python doesn't. Access data via context keys like data['neuron_0_2']. IMPORTANT: Check if data has '_ref_id' key - if yes, load with load_data_reference(ref_id) which returns {'activities': [...]}; if no, data already contains the list directly. Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
+    description="Execute Python code for 100% accurate counting, filtering, and FORMATTING. CRITICAL: Use this for ANY counting task - AI models miscount, Python doesn't. For FORMATTING tasks with disk references: 1) Load data with load_data_reference(), 2) Build human-readable STRING output (not raw dicts). Access data via context keys like data['neuron_0_2']. Check if '_ref_id' exists - if yes, must load first. Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
     parameters=[
         {
             "name": "python_code",
             "type": "string",
-            "description": "Python code to execute. Has access to 'data' variable and load_data_reference() function. IMPORTANT: First check if '_ref_id' exists in data, then: WITH ref: ref_id = data['neuron_0_2']['_ref_id']; loaded = load_data_reference(ref_id); result = len([x for x in loaded['activities'] if ...]). WITHOUT ref (direct data): result = len([x for x in data['neuron_0_2']['activities'] if ...]). Must assign to 'result' variable.",
+            "description": "Python code to execute. Has access to 'data' variable and load_data_reference() function. FOR FORMATTING: Build readable STRING, e.g. result = '\\n'.join([f\"{act['name']} - {act['distance']}m on {act['start_date'][:10]}\" for act in activities]). FOR COUNTING: result = len([x for x in activities if...]). IMPORTANT: If '_ref_id' in data, MUST load first: loaded = load_data_reference(data['key']['_ref_id']); activities = loaded['activities']. If no _ref_id: activities = data['key']['activities']. Must assign to 'result' variable.",
             "required": True
         }
     ],
