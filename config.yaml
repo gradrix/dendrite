@@ -3,10 +3,25 @@
 # Ollama settings
 ollama:
   base_url: "http://ollama:11434"  # Using Docker network to reach Ollama container
-  model: "deepseek-r1:32b"  # Better for structured output (JSON, etc.)
+  
+  # Model selection strategy:
+  # - "auto": Automatically select best model based on available RAM/VRAM
+  # - "mistral-small3.2:24b": Specific model (24B, excellent reasoning, better counting)
+  # - "qwen2.5:32b": Specific model (32B, high quality, good counting)
+  # - "llama3.1:8b": Specific model (8B, balanced, Raspberry Pi capable)
+  # - "qwen2.5:3b": Specific model (3B, fast, minimal resources)
+  model: "auto"  # Will auto-detect best model on startup
+  
+  # Fallback if auto-detection fails
+  fallback_model: "llama3.1:8b"
+  
   timeout: 600  # 5 minutes for generation and analysis
   max_retries: 3
   temperature: 0.7
+  
+  # Force Python tools for counting tasks (recommended for all models)
+  # Even large models can miscount - Python is 100% reliable
+  force_python_counting: true
   
 # Agent settings
 agent:

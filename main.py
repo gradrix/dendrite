@@ -23,6 +23,8 @@ load_dotenv()
 from agent.ollama_client import OllamaClient
 from agent.tool_registry import get_registry
 from agent.state_manager import StateManager
+from agent.model_config import get_model_profile
+from agent.resource_detector import detect_system_resources, get_recommended_model
 
 # Configure logging
 logging.basicConfig(
@@ -48,10 +50,23 @@ class AIAgent:
         # Load configuration
         self.config = self._load_config(config_path)
         
+        # Auto-detect and select model if needed
+        model_name = self._select_model()
+        
+        # Store model profile for reference
+        self.model_profile = get_model_profile(model_name)
+        if self.model_profile:
+            logger.info(f"📋 Model capabilities:")
+            logger.info(f"   Reasoning: {self.model_profile.good_at_reasoning}")
+            logger.info(f"   Counting: {self.model_profile.good_at_counting}")
+            logger.info(f"   JSON: {self.model_profile.good_at_json}")
+            logger.info(f"   Code: {self.model_profile.good_at_code}")
+            logger.info(f"   Notes: {self.model_profile.notes}")
+        
         # Initialize components
         self.ollama = OllamaClient(
             base_url=self.config['ollama']['base_url'],
-            model=self.config['ollama']['model'],
+            model=model_name,
             timeout=self.config['ollama']['timeout'],
             max_retries=self.config['ollama']['max_retries'],
             temperature=self.config['ollama']['temperature']
@@ -64,6 +79,25 @@ class AIAgent:
         
         self.running = False
         self.scheduler = None
+    
+    def _select_model(self) -> str:
+        """Select model based on config and available resources."""
+        model = self.config['ollama']['model']
+        
+        if model == "auto":
+            logger.info("🔍 Auto-detecting best model for available resources...")
+            try:
+                recommended = get_recommended_model()
+                logger.info(f"✅ Auto-selected model: {recommended}")
+                return recommended
+            except Exception as e:
+                logger.error(f"❌ Auto-detection failed: {e}")
+                fallback = self.config['ollama'].get('fallback_model', 'llama3.1:8b')
+                logger.warning(f"⚠️  Using fallback model: {fallback}")
+                return fallback
+        else:
+            logger.info(f"📌 Using configured model: {model}")
+            return model
     
     def _load_config(self, config_path: str) -> dict:
         """Load configuration from YAML file."""

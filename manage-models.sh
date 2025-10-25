@@ -1,248 +1,221 @@
 #!/bin/bash
+#
+# Unified Model Management Script
+#
 
 set -e
 
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Load configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
+CONFIG_FILE="${SCRIPT_DIR}/config.yaml"
 
-if [ -f "$ENV_FILE" ]; then
-    source "$ENV_FILE"
-else
-    OLLAMA_PORT=${OLLAMA_PORT:-11434}
-fi
-
-OLLAMA_URL="http://localhost:${OLLAMA_PORT}"
-
-print_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
+print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_header() {
+    echo ""
     echo -e "${CYAN}=========================================${NC}"
     echo -e "${CYAN}$1${NC}"
     echo -e "${CYAN}=========================================${NC}"
 }
 
-# Check if API is accessible
 check_ollama() {
-    if ! curl -sf "${OLLAMA_URL}/api/tags" > /dev/null 2>&1; then
-        print_error "Ollama API is not accessible at ${OLLAMA_URL}"
-        print_error "Is the container running? Try: docker ps | grep ollama"
+    if ! docker ps | grep -q ollama; then
+        print_error "Ollama container is not running!"
+        print_info "Start it with: ./setup-ollama.sh"
         exit 1
     fi
 }
 
-# Show running models
-show_running() {
-    print_header "Running Models"
+get_recommended_model() {
+    docker compose run --rm agent python3 show_model_recommendation.py 2>/dev/null | \
+        grep "Best match:" | awk '{print $4}'
+}
+
+show_recommendation() {
+    print_header "Model Recommendation"
+    docker compose run --rm agent python3 show_model_recommendation.py 2>/dev/null
+}
+
+list_downloaded_models() {
+    print_header "Downloaded Models in Ollama"
+    docker exec ollama ollama list 2>/dev/null || {
+        print_error "Failed to list models"
+        return 1
+    }
+}
+
+is_model_downloaded() {
+    local model_name="$1"
+    docker exec ollama ollama list 2>/dev/null | grep -q "^${model_name}"
+}
+
+download_model() {
+    local model_name="$1"
     
-    response=$(curl -s "${OLLAMA_URL}/api/ps" 2>/dev/null)
-    
-    if [ -z "$response" ] || [ "$response" = "{}" ] || [ "$response" = '{"models":[]}' ]; then
-        print_warning "No models currently running"
-        echo ""
-        return
+    if is_model_downloaded "$model_name"; then
+        print_info "Model '${model_name}' is already downloaded"
+        return 0
     fi
     
-    # Parse and display running models
-    echo "$response" | python3 -c "
-import json
-import sys
-from datetime import datetime
+    print_info "Downloading model: ${model_name}"
+    print_warning "This may take several minutes..."
+    
+    docker exec -it ollama ollama pull "$model_name" || {
+        print_error "Failed to download model"
+        return 1
+    }
+    
+    print_info "✅ Model downloaded successfully!"
+}
 
-try:
-    data = json.load(sys.stdin)
-    models = data.get('models', [])
+delete_model() {
+    local model_name="$1"
     
-    if not models:
-        print('No models currently running')
-    else:
-        for i, model in enumerate(models, 1):
-            name = model.get('name', 'unknown')
-            size = model.get('size', 0)
-            size_gb = size / (1024**3)
-            
-            # Get timing info if available
-            expires_at = model.get('expires_at', '')
-            digest = model.get('digest', '')[:12]
-            
-            print(f'  {i}. {name}')
-            print(f'     Size: {size_gb:.2f} GB')
-            print(f'     Digest: {digest}...')
-            if expires_at:
-                print(f'     Expires: {expires_at}')
-            print()
-            
-except Exception as e:
-    print(f'Error parsing response: {e}', file=sys.stderr)
-" || echo "$response"
+    if ! is_model_downloaded "$model_name"; then
+        print_warning "Model not downloaded"
+        return 1
+    fi
     
+    print_warning "Delete '${model_name}'? [y/N]"
+    read -r response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        docker exec ollama ollama rm "$model_name"
+        print_info "✅ Model deleted"
+    fi
+}
+
+update_config_model() {
+    local model_name="$1"
+    
+    if grep -q "^  model:" "$CONFIG_FILE"; then
+        sed -i "s|^  model:.*|  model: \"${model_name}\"|" "$CONFIG_FILE"
+        print_info "✅ Updated config.yaml"
+    else
+        print_error "Could not find model config"
+        return 1
+    fi
+}
+
+get_current_model() {
+    grep "^  model:" "$CONFIG_FILE" | sed 's/.*: *"\([^"]*\)".*/\1/' || echo "auto"
+}
+
+cmd_auto() {
+    print_header "🤖 Auto-Select Best Model"
+    check_ollama
+    
+    recommended=$(get_recommended_model)
+    if [ -z "$recommended" ]; then
+        print_error "Failed to get recommendation"
+        exit 1
+    fi
+    
+    show_recommendation
+    
+    if ! is_model_downloaded "$recommended"; then
+        print_info "Download ${recommended}? [Y/n]"
+        read -r response
+        [[ ! "$response" =~ ^[Nn]$ ]] && download_model "$recommended"
+    else
+        print_info "✅ Model already downloaded"
+    fi
+    
+    current=$(get_current_model)
+    if [ "$current" != "$recommended" ]; then
+        print_info "Update config to use ${recommended}? [Y/n]"
+        read -r response
+        [[ ! "$response" =~ ^[Nn]$ ]] && update_config_model "$recommended"
+    fi
+    
+    print_info "✅ Setup complete!"
+}
+
+cmd_list() {
+    check_ollama
+    list_downloaded_models
     echo ""
+    print_info "Configured: $(get_current_model)"
 }
 
-# Unload a specific model
-unload_model() {
-    local model_name="$1"
+cmd_use() {
+    [ -z "$1" ] && { print_error "Usage: $0 use <model-name>"; exit 1; }
+    check_ollama
     
-    if [ -z "$model_name" ]; then
-        print_error "Model name required"
-        echo "Usage: $0 unload <model-name>"
-        exit 1
-    fi
+    is_model_downloaded "$1" || {
+        print_info "Download $1? [Y/n]"
+        read -r response
+        [[ ! "$response" =~ ^[Nn]$ ]] && download_model "$1"
+    }
     
-    print_info "Unloading model: $model_name"
-    
-    # Generate a request with keep_alive=0 to unload
-    response=$(curl -s -X POST "${OLLAMA_URL}/api/generate" \
-        -H "Content-Type: application/json" \
-        -d "{\"model\": \"${model_name}\", \"keep_alive\": 0}" 2>&1)
-    
-    if [ $? -eq 0 ]; then
-        print_info "Model unloaded successfully"
-    else
-        print_error "Failed to unload model: $response"
-        exit 1
-    fi
+    update_config_model "$1"
+    print_info "✅ Now using: $1"
 }
 
-# Load/warm up a model
-load_model() {
-    local model_name="$1"
-    
-    if [ -z "$model_name" ]; then
-        print_error "Model name required"
-        echo "Usage: $0 load <model-name>"
-        exit 1
-    fi
-    
-    print_info "Loading model: $model_name"
-    print_info "This will keep the model in memory for 5 minutes..."
-    
-    # Generate a simple request to load the model
-    response=$(curl -s -X POST "${OLLAMA_URL}/api/generate" \
-        -H "Content-Type: application/json" \
-        -d "{\"model\": \"${model_name}\", \"prompt\": \"hi\", \"stream\": false, \"keep_alive\": \"5m\"}" 2>&1)
-    
-    if [ $? -eq 0 ]; then
-        print_info "Model loaded successfully (will stay in memory for 5 minutes)"
-    else
-        print_error "Failed to load model: $response"
-        exit 1
-    fi
+cmd_download() {
+    [ -z "$1" ] && { print_error "Usage: $0 download <model-name>"; exit 1; }
+    check_ollama
+    download_model "$1"
 }
 
-# Unload all running models
-unload_all() {
-    print_info "Unloading all running models..."
-    
-    response=$(curl -s "${OLLAMA_URL}/api/ps" 2>/dev/null)
-    
-    if [ -z "$response" ] || [ "$response" = "{}" ] || [ "$response" = '{"models":[]}' ]; then
-        print_warning "No models currently running"
-        return
-    fi
-    
-    # Extract model names and unload each
-    echo "$response" | python3 -c "
-import json
-import sys
-
-try:
-    data = json.load(sys.stdin)
-    models = data.get('models', [])
-    
-    for model in models:
-        name = model.get('name', '')
-        if name:
-            print(name)
-            
-except Exception as e:
-    print(f'Error: {e}', file=sys.stderr)
-" | while read -r model_name; do
-        if [ -n "$model_name" ]; then
-            print_info "Unloading: $model_name"
-            curl -s -X POST "${OLLAMA_URL}/api/generate" \
-                -H "Content-Type: application/json" \
-                -d "{\"model\": \"${model_name}\", \"keep_alive\": 0}" > /dev/null 2>&1
-        fi
-    done
-    
-    print_info "All models unloaded"
+cmd_delete() {
+    [ -z "$1" ] && { print_error "Usage: $0 delete <model-name>"; exit 1; }
+    check_ollama
+    delete_model "$1"
 }
 
-# Show help
+cmd_recommend() {
+    show_recommendation
+}
+
+cmd_info() {
+    check_ollama
+    print_header "System & Model Information"
+    print_info "Configured: $(get_current_model)"
+    echo ""
+    list_downloaded_models
+    echo ""
+    print_info "Recommended: $(get_recommended_model)"
+}
+
 show_help() {
-    echo "Ollama Model Management Tool"
-    echo ""
-    echo "Usage: $0 <command> [options]"
-    echo ""
-    echo "Commands:"
-    echo "  ps, running          Show currently running models"
-    echo "  load <model>         Load a model into memory"
-    echo "  unload <model>       Unload a specific model from memory"
-    echo "  unload-all           Unload all running models"
-    echo "  list                 List all available models"
-    echo "  help                 Show this help message"
-    echo ""
-    echo "Examples:"
-    echo "  $0 ps                          # Show running models"
-    echo "  $0 load llama3.2:3b            # Load a model"
-    echo "  $0 unload llama3.2:3b          # Unload a model"
-    echo "  $0 unload-all                  # Unload everything"
-    echo ""
+    cat << EOF
+${CYAN}Model Management${NC}
+
+${GREEN}Commands:${NC}
+  ${YELLOW}auto${NC}              Auto-detect and setup best model
+  ${YELLOW}list${NC}              List downloaded models
+  ${YELLOW}use <model>${NC}       Switch to a model (downloads if needed)
+  ${YELLOW}download <model>${NC}  Download a model
+  ${YELLOW}delete <model>${NC}    Delete a model
+  ${YELLOW}recommend${NC}         Show recommended model
+  ${YELLOW}info${NC}              Show system info and models
+
+${GREEN}Examples:${NC}
+  $0 auto
+  $0 use mistral-small3.2:24b
+  $0 list
+  $0 download llama3.1:8b
+
+EOF
 }
 
-# Main command handler
 main() {
-    local command="${1:-ps}"
-    
-    case "$command" in
-        ps|running)
-            check_ollama
-            show_running
-            ;;
-        load)
-            check_ollama
-            load_model "$2"
-            ;;
-        unload)
-            check_ollama
-            unload_model "$2"
-            ;;
-        unload-all)
-            check_ollama
-            unload_all
-            ;;
-        list)
-            check_ollama
-            ./list-models.sh
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        *)
-            print_error "Unknown command: $command"
-            echo ""
-            show_help
-            exit 1
-            ;;
+    case "${1:-help}" in
+        auto) cmd_auto ;;
+        list|ls) cmd_list ;;
+        use|switch) shift; cmd_use "$@" ;;
+        download|pull) shift; cmd_download "$@" ;;
+        delete|rm) shift; cmd_delete "$@" ;;
+        recommend|rec) cmd_recommend ;;
+        info|status) cmd_info ;;
+        *) show_help ;;
     esac
 }
 

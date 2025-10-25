@@ -21,6 +21,9 @@ services:
       - PYTHONUNBUFFERED=1
       - STRAVA_CLIENT_ID=${STRAVA_CLIENT_ID}
       - STRAVA_CLIENT_SECRET=${STRAVA_CLIENT_SECRET}
+      # GPU/VRAM detection (optional - will auto-detect if not set)
+      - VRAM_GB=${VRAM_GB:-}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
     env_file:
       - .env
     restart: unless-stopped

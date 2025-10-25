@@ -43,6 +43,47 @@ from agent.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _compact_activity_data(data: Any) -> Any:
+    """
+    Transform activity data into compact format for storage.
+    Removes polylines and keeps only essential fields for small models.
+    """
+    if isinstance(data, dict):
+        # Check if this is an activity list result
+        if 'activities' in data and isinstance(data['activities'], list):
+            activities = data['activities']
+            if len(activities) > 0 and isinstance(activities[0], dict):
+                # Transform to compact format (6 fields instead of 50+)
+                compact_activities = []
+                for act in activities:
+                    compact = {
+                        'name': act.get('name', 'Unknown'),
+                        'type': act.get('type', 'Unknown'),
+                        'sport_type': act.get('sport_type', act.get('type', 'Unknown')),
+                        'id': act.get('id'),
+                        'distance': act.get('distance'),
+                        'date': act.get('start_date_local', act.get('start_date', ''))[:10]  # Just date part
+                    }
+                    compact_activities.append(compact)
+                
+                # Return compact version with metadata
+                result = {
+                    'activities': compact_activities,
+                    'count': len(compact_activities),
+                    'format': 'compact',  # Flag indicating this is optimized
+                    'fields': ['name', 'type', 'sport_type', 'id', 'distance', 'date']
+                }
+                logger.info(f"💾 Stored {len(compact_activities)} activities in compact format (removed polylines & extra fields)")
+                return result
+        
+        # Recursively process nested dicts
+        return {k: _compact_activity_data(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_compact_activity_data(item) for item in data]
+    else:
+        return data
+
+
 @dataclass
 class Neuron:
     """A single execution unit (neuron) in the agent's brain."""
@@ -119,8 +160,9 @@ class NeuronAgent:
                 neuron.result = result
                 all_results.append(result)
                 
-                # Store in context for subsequent neurons
-                self.context[f'neuron_{depth}_{neuron.index}'] = result
+                # Store in context for subsequent neurons (compact format for activities)
+                compact_result = _compact_activity_data(result)
+                self.context[f'neuron_{depth}_{neuron.index}'] = compact_result
                 
             except Exception as e:
                 logger.error(f"{'  ' * depth}│  ❌ Neuron {neuron.index} failed: {e}")
@@ -592,34 +634,39 @@ Output (numbered list of tool calls, or SINGLE_TASK):"""
     def _micro_decompose(self, goal: str, depth: int) -> List[Neuron]:
         """Micro-prompt: Decompose goal into 1-4 neurons."""
         
+        # STEP 0: Get expert strategy recommendation first
+        strategy_advice = self._get_strategy_advice(goal)
+        
         prompt = f"""Break this goal into 1-4 simple steps. NO DUPLICATES.
 
 Goal: {goal}
 
+{strategy_advice}
+
 Rules:
 - Each step = ONE action (ONE tool call OR one AI response)
-- If goal asks "how many X activities", that's typically: (1) convert dates, (2) fetch ALL activities, (3) filter/count matching X type
+- If goal asks "how many X activities", that's typically: (1) convert dates, (2) fetch ALL activities, (3) use executeDataAnalysis with Python to count type=X
 - When fetching data, get ALL data first, then filter/analyze in a separate step
 - Format/display/report steps go at the end
 - NO DUPLICATE STEPS - each step must be different
 - IMPORTANT: If goal mentions a date period (like "January 2024", "September 2025", "last week"):
   * First step: Convert date to timestamps (start and end)
   * Second step: Fetch data using those timestamps
-  * Third step: Filter/count/analyze the fetched data (NO new fetch, work with existing data)
+  * Third step: Use executeDataAnalysis to count/filter (NO new fetch, work with existing data)
   * Fourth step: Format results
 - If goal asks for a specific activity TYPE (e.g., "running activities", "rides"):
-  * The filtering step should say "Filter activities where type=Run" or "Count Run activities from fetched data"
-  * Do NOT fetch again - work with data from previous step
+  * The filtering step should say "Use executeDataAnalysis to count activities where type=Run"
+  * Do NOT rely on AI counting - use Python for accurate counting
 
 Examples:
-- "How many runs in Jan 2024?" → (1) Convert Jan 2024 to timestamps, (2) Fetch all activities, (3) Count where type=Run
-- "Show my 3 rides from last month" → (1) Convert last month to timestamps, (2) Fetch all activities, (3) Filter type=Ride and take first 3, (4) Format
+- "How many runs in Jan 2024?" → (1) Convert Jan 2024 to timestamps, (2) Fetch all activities, (3) Use executeDataAnalysis to count where sport_type contains 'Run'
+- "Show my 3 rides from last month" → (1) Convert last month to timestamps, (2) Fetch all activities, (3) Use executeDataAnalysis to filter type=Ride and take first 3, (4) Format
 
 Output numbered list (1-4 steps, NO duplicates):"""
         
         response = self.ollama.generate(
             prompt,
-            system="Decompose goals into minimal steps. NO duplicates. Output numbered list only.",
+            system="Decompose goals into minimal steps. NO duplicates. Prefer executeDataAnalysis for counting/filtering. Output numbered list only.",
             temperature=0.2  # Lower temperature for more deterministic output
         )
         
@@ -657,6 +704,41 @@ Output numbered list (1-4 steps, NO duplicates):"""
             neurons = neurons[:4]
         
         return neurons
+    
+    def _get_strategy_advice(self, goal: str) -> str:
+        """
+        Get expert strategy advice for approaching the goal.
+        This guides the AI towards better tool selection (especially Python for counting).
+        """
+        # Detect task characteristics
+        is_counting = any(word in goal.lower() for word in ['how many', 'count', 'number of'])
+        is_filtering = any(word in goal.lower() for word in ['filter', 'where', 'type=', 'matching'])
+        mentions_large_data = any(word in goal.lower() for word in ['all', 'every', 'total'])
+        has_date_range = any(word in goal.lower() for word in ['month', 'week', 'year', 'september', 'january', 'last'])
+        
+        advice_parts = []
+        
+        # Force Python counting if configured or if task involves counting
+        force_python = self.config.get('ollama', {}).get('force_python_counting', True)
+        
+        if is_counting or is_filtering:
+            if force_python or mentions_large_data:
+                advice_parts.append("⚠️ CRITICAL: Use executeDataAnalysis tool with Python code for counting/filtering.")
+                advice_parts.append("   Reason: AI models (even 32B+) can miscount. Python is 100% reliable.")
+                advice_parts.append("   Example: executeDataAnalysis(python_code='result = {\"count\": len([x for x in data[\"neuron_0_2\"][\"activities\"] if \"Run\" in x.get(\"sport_type\", \"\")])}')")
+            
+            if mentions_large_data:
+                advice_parts.append("⚠️ Large dataset detected: Counting 50+ items by AI is unreliable. MUST use Python.")
+        
+        if has_date_range:
+            advice_parts.append("💡 Date range detected: First convert to timestamps, then fetch once, then analyze.")
+        
+        if not advice_parts:
+            return ""
+        
+        strategy = "\n🎯 EXPERT STRATEGY RECOMMENDATION:\n" + "\n".join(advice_parts) + "\n"
+        logger.info(f"   💡 Strategy advice provided for: {goal[:50]}...")
+        return strategy
     
     def _micro_find_tool(self, neuron_desc: str) -> Optional[Any]:
         """Micro-prompt: Which tool for this neuron?"""
@@ -703,6 +785,13 @@ Output numbered list (1-4 steps, NO duplicates):"""
                 'give.*kudos': ['givekudos', 'givekudostoparticipants'],
                 'validate.*timestamp': ['validatetimestamp'],
                 'current.*date': ['getcurrentdatetime'],
+                # Python execution for counting/filtering
+                'count.*activities': ['executedataanalysis'],
+                'count.*where': ['executedataanalysis'],
+                'filter.*where': ['executedataanalysis'],
+                'executedataanalysis.*count': ['executedataanalysis'],
+                'python.*count': ['executedataanalysis'],
+                'use.*executedataanalysis': ['executedataanalysis'],
             }
             
             for pattern, matching_tools in intent_signals.items():
@@ -722,6 +811,9 @@ Output numbered list (1-4 steps, NO duplicates):"""
                 'strava activities': 'getmyactivities',
                 'friends activities': 'getdashboardfeed',
                 'dashboard feed': 'getdashboardfeed',
+                'executedataanalysis': 'executedataanalysis',
+                'python code': 'executedataanalysis',
+                'count activities': 'executedataanalysis',
             }
             
             for phrase, matching_tool in key_phrases.items():
@@ -1289,19 +1381,70 @@ Provide a brief summary (2-3 sentences):"""
         
         # Build context summary - include actual data structures
         context_summary = ""
+        compact_data = None  # For small model optimization
+        
         if self.context:
             context_summary = "\n\nAvailable data:"
             for key, value in list(self.context.items())[:10]:
                 if isinstance(value, dict):
-                    # For activities list, show structure clearly
+                    # For activities list, OPTIMIZE for small models
                     if 'activities' in value:
                         activities = value['activities']
+                        
+                        # Check if already in compact format (from context storage)
+                        is_compact = value.get('format') == 'compact'
+                        
                         if isinstance(activities, list) and len(activities) > 0:
-                            context_summary += f"\n  {key}: List of {len(activities)} activities"
-                            # Show first activity structure
-                            first_activity = activities[0]
-                            context_summary += f"\n    Each activity has: {', '.join(first_activity.keys())}"
-                            context_summary += f"\n    Example: {json.dumps(first_activity, indent=4)[:500]}"
+                            # Check if this is a counting/filtering task
+                            is_counting = any(word in neuron_desc.lower() for word in ['count', 'how many', 'number of'])
+                            is_filtering = any(word in neuron_desc.lower() for word in ['filter', 'type', 'where', 'matching'])
+                            
+                            if is_counting or is_filtering:
+                                # Use pre-compacted data if available, otherwise compact now
+                                if is_compact:
+                                    compact_activities = activities  # Already compact!
+                                    logger.info(f"📋 Using pre-stored compact format: {len(activities)} activities")
+                                else:
+                                    # Legacy path: compact on-the-fly (shouldn't happen with new storage)
+                                    compact_activities = []
+                                    for act in activities:
+                                        compact = {
+                                            'name': act.get('name', 'Unknown'),
+                                            'type': act.get('type', 'Unknown'),
+                                            'sport_type': act.get('sport_type', act.get('type', 'Unknown')),
+                                            'id': act.get('id'),
+                                            'distance': act.get('distance'),
+                                            'date': act.get('start_date_local', act.get('start_date', ''))[:10]  # Just date part
+                                        }
+                                        compact_activities.append(compact)
+                                
+                                compact_data = compact_activities
+                                context_summary += f"\n  {key}: {len(activities)} activities (compact format)"
+                                context_summary += f"\n    Format: name, type, sport_type, id, distance, date"
+                                context_summary += f"\n    Activities:\n"
+                                # Show ALL activities in compact format for small models
+                                for i, act in enumerate(compact_activities[:100]):  # Limit to 100 for safety
+                                    context_summary += f"      {i+1}. {act['name']} | type={act['sport_type']} | date={act['date']}\n"
+                                if len(compact_activities) > 100:
+                                    context_summary += f"      ... and {len(compact_activities) - 100} more\n"
+                                
+                                # Log what we're showing
+                                logger.info(f"   │  │  📋 Compact format: showing {min(len(compact_activities), 100)} activities to AI")
+                                run_count = sum(1 for a in compact_activities if 'Run' in a.get('sport_type', ''))
+                                logger.info(f"   │  │  🏃 Activities with 'Run' in sport_type: {run_count}")
+                                
+                                # SANITY CHECK: Write activities to temp file for debugging
+                                try:
+                                    with open('/tmp/ai_activities_debug.json', 'w') as f:
+                                        json.dump({'count': len(compact_activities), 'run_count': run_count, 'activities': compact_activities[:10]}, f, indent=2)
+                                except:
+                                    pass
+                            else:
+                                # For non-counting tasks, show structure only
+                                context_summary += f"\n  {key}: List of {len(activities)} activities"
+                                first_activity = activities[0]
+                                context_summary += f"\n    Each activity has: {', '.join(first_activity.keys())}"
+                                context_summary += f"\n    Example: {json.dumps(first_activity, indent=4)[:500]}"
                     else:
                         context_summary += f"\n  {key}: {json.dumps(value, indent=2)[:400]}"
                 else:
@@ -1310,28 +1453,35 @@ Provide a brief summary (2-3 sentences):"""
         # Improved prompt with specific instructions for common tasks
         task_type = ""
         if any(word in neuron_desc.lower() for word in ['count', 'how many']):
-            task_type = "\n\nYou are counting. Look at the data and count matching items. Output ONLY the number."
+            task_type = "\n\n**YOU ARE COUNTING**"
+            task_type += "\nInstructions:"
+            task_type += "\n1. Look at EVERY activity listed above"
+            task_type += "\n2. Check each one's 'type' or 'sport_type' field"
+            task_type += "\n3. Count only those matching the requested type"
+            task_type += "\n4. Output: 'COUNT: X activities' where X is the exact number"
+            task_type += "\n\nExample: If asked 'how many runs', count where sport_type contains 'Run'"
         elif any(word in neuron_desc.lower() for word in ['filter', 'find', 'get']):
-            task_type = "\n\nYou are filtering. Look at the data and find matching items. List them clearly."
+            task_type = "\n\n**YOU ARE FILTERING**"
+            task_type += "\n1. Look at the activities list"
+            task_type += "\n2. Find items matching the criteria"
+            task_type += "\n3. List them clearly with their names"
         elif any(word in neuron_desc.lower() for word in ['format', 'report', 'present']):
-            task_type = "\n\nYou are formatting. Present the data in a clear, readable format."
+            task_type = "\n\n**YOU ARE FORMATTING**"
+            task_type += "\n1. Take the existing data"
+            task_type += "\n2. Present it in a clear, readable format"
         
         prompt = f"""Task: {neuron_desc}
 {context_summary}
 {task_type}
 
-Instructions:
-1. Examine the available data carefully
-2. For lists, iterate through items and check each one
-3. For counting: Output the exact count as a number
-4. For filtering: List all matching items
-5. Be precise and use the actual data provided
-
 Your answer:"""
+        
+        # Log prompt stats
+        logger.info(f"   │  │  📝 Prompt: {len(prompt)} chars, {len(prompt.split())} words")
         
         response = self.ollama.generate(
             prompt,
-            system="You analyze data precisely. Count items by checking each one. Filter by examining properties. Be accurate.",
+            system="You count and analyze data precisely. For counting: examine each item in the list and count matches. Output exact numbers.",
             temperature=0.1  # Lower temperature for more deterministic analysis
         )
         

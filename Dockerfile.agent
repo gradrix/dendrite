@@ -19,6 +19,7 @@ COPY instructions/ ./instructions/
 COPY tests/ ./tests/
 COPY config.yaml .
 COPY main.py .
+COPY show_model_recommendation.py .
 
 # Create directories for state and logs
 RUN mkdir -p state logs
