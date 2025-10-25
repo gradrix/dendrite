@@ -17,7 +17,7 @@ echo "2. Checking Ollama connection..."
 if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
     echo "✓ Ollama is running"
 else
-    echo "✗ Ollama is not accessible. Run: ./setup-ollama.sh"
+    echo "✗ Ollama is not accessible. Run: ./scripts/setup-ollama.sh"
     exit 1
 fi
 

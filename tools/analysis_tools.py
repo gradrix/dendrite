@@ -2,6 +2,7 @@
 Utility tool for executing safe Python code for data analysis.
 
 Allows the AI to write simple Python code to analyze data.
+Supports loading large data from disk references.
 """
 
 import json
@@ -9,18 +10,19 @@ import logging
 from typing import Any, Dict
 
 from agent.tool_registry import tool
+from agent.data_compaction import load_data_reference
 
 logger = logging.getLogger(__name__)
 
 
 @tool(
     name="executeDataAnalysis",
-    description="Execute Python code for 100% accurate counting, filtering, and analysis. CRITICAL: Use this for ANY counting task (even 'how many' questions) - AI models miscount, Python doesn't. Access data via context keys like data['neuron_0_2']['activities']. Example: count runs = len([x for x in data['neuron_0_2']['activities'] if 'Run' in x.get('sport_type', '')]). Must assign result to 'result' variable. Safe execution - no file I/O, no imports.",
+    description="Execute Python code for 100% accurate counting, filtering, and analysis. CRITICAL: Use this for ANY counting task (even 'how many' questions) - AI models miscount, Python doesn't. Access data via context keys like data['neuron_0_2']. If data is a disk reference (_format='disk_reference'), use load_data_reference(ref_id) to load full data. Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
     parameters=[
         {
             "name": "python_code",
             "type": "string",
-            "description": "Python code to execute. Has access to 'data' variable containing all context. Must assign result to 'result' variable. Example for counting: result = {'count': len([x for x in data['neuron_0_2']['activities'] if 'Run' in x.get('sport_type', '')])}}. Context keys are like 'neuron_0_1', 'neuron_0_2', etc.",
+            "description": "Python code to execute. Has access to 'data' variable containing all context. Use load_data_reference(ref_id) to load large data from disk. Must assign result to 'result' variable. Example: activities = load_data_reference(data['neuron_0_2']['_ref_id']); result = {'count': len([x for x in activities if 'Run' in x.get('sport_type', '')])}}",
             "required": True
         }
     ],
@@ -63,7 +65,8 @@ def execute_data_analysis(python_code: str, **context) -> Dict[str, Any]:
                 'abs': abs,
             },
             'data': context,
-            'result': None
+            'result': None,
+            'load_data_reference': load_data_reference,  # Allow loading disk references
         }
         
         # Execute the code

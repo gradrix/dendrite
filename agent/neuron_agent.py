@@ -39,49 +39,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agent.ollama_client import OllamaClient
 from agent.tool_registry import ToolRegistry
+from agent.data_compaction import compact_data
 
 logger = logging.getLogger(__name__)
-
-
-def _compact_activity_data(data: Any) -> Any:
-    """
-    Transform activity data into compact format for storage.
-    Removes polylines and keeps only essential fields for small models.
-    """
-    if isinstance(data, dict):
-        # Check if this is an activity list result
-        if 'activities' in data and isinstance(data['activities'], list):
-            activities = data['activities']
-            if len(activities) > 0 and isinstance(activities[0], dict):
-                # Transform to compact format (6 fields instead of 50+)
-                compact_activities = []
-                for act in activities:
-                    compact = {
-                        'name': act.get('name', 'Unknown'),
-                        'type': act.get('type', 'Unknown'),
-                        'sport_type': act.get('sport_type', act.get('type', 'Unknown')),
-                        'id': act.get('id'),
-                        'distance': act.get('distance'),
-                        'date': act.get('start_date_local', act.get('start_date', ''))[:10]  # Just date part
-                    }
-                    compact_activities.append(compact)
-                
-                # Return compact version with metadata
-                result = {
-                    'activities': compact_activities,
-                    'count': len(compact_activities),
-                    'format': 'compact',  # Flag indicating this is optimized
-                    'fields': ['name', 'type', 'sport_type', 'id', 'distance', 'date']
-                }
-                logger.info(f"💾 Stored {len(compact_activities)} activities in compact format (removed polylines & extra fields)")
-                return result
-        
-        # Recursively process nested dicts
-        return {k: _compact_activity_data(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [_compact_activity_data(item) for item in data]
-    else:
-        return data
 
 
 @dataclass
@@ -160,9 +120,10 @@ class NeuronAgent:
                 neuron.result = result
                 all_results.append(result)
                 
-                # Store in context for subsequent neurons (compact format for activities)
-                compact_result = _compact_activity_data(result)
-                self.context[f'neuron_{depth}_{neuron.index}'] = compact_result
+                # Store in context (auto-saves large data to disk)
+                context_key = f'neuron_{depth}_{neuron.index}'
+                compact_result = compact_data(result, context_key=context_key)
+                self.context[context_key] = compact_result
                 
             except Exception as e:
                 logger.error(f"{'  ' * depth}│  ❌ Neuron {neuron.index} failed: {e}")

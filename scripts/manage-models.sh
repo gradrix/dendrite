@@ -13,7 +13,8 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/config.yaml"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CONFIG_FILE="${PROJECT_ROOT}/config.yaml"
 
 print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
@@ -28,7 +29,7 @@ print_header() {
 check_ollama() {
     if ! docker ps | grep -q ollama; then
         print_error "Ollama container is not running!"
-        print_info "Start it with: ./setup-ollama.sh"
+        print_info "Start it with: ./scripts/setup-ollama.sh"
         exit 1
     fi
 }
@@ -185,25 +186,24 @@ cmd_info() {
 }
 
 show_help() {
-    cat << EOF
-${CYAN}Model Management${NC}
-
-${GREEN}Commands:${NC}
-  ${YELLOW}auto${NC}              Auto-detect and setup best model
-  ${YELLOW}list${NC}              List downloaded models
-  ${YELLOW}use <model>${NC}       Switch to a model (downloads if needed)
-  ${YELLOW}download <model>${NC}  Download a model
-  ${YELLOW}delete <model>${NC}    Delete a model
-  ${YELLOW}recommend${NC}         Show recommended model
-  ${YELLOW}info${NC}              Show system info and models
-
-${GREEN}Examples:${NC}
-  $0 auto
-  $0 use mistral-small3.2:24b
-  $0 list
-  $0 download llama3.1:8b
-
-EOF
+    echo ""
+    echo -e "${CYAN}Model Management${NC}"
+    echo ""
+    echo -e "${GREEN}Commands:${NC}"
+    echo -e "  ${YELLOW}auto${NC}              Auto-detect and setup best model"
+    echo -e "  ${YELLOW}list${NC}              List downloaded models"
+    echo -e "  ${YELLOW}use <model>${NC}       Switch to a model (downloads if needed)"
+    echo -e "  ${YELLOW}download <model>${NC}  Download a model"
+    echo -e "  ${YELLOW}delete <model>${NC}    Delete a model"
+    echo -e "  ${YELLOW}recommend${NC}         Show recommended model"
+    echo -e "  ${YELLOW}info${NC}              Show system info and models"
+    echo ""
+    echo -e "${GREEN}Examples:${NC}"
+    echo "  $0 auto"
+    echo "  $0 use mistral-small3.2:24b"
+    echo "  $0 list"
+    echo "  $0 download llama3.1:8b"
+    echo ""
 }
 
 main() {
