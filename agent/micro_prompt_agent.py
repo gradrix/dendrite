@@ -71,7 +71,13 @@ class MicroPromptAgent:
         
     def execute_goal(self, goal: str, dry_run: bool = False) -> Dict[str, Any]:
         """
-        Execute a goal through micro-prompting with validation at each step.
+        Execute a goal through micro-task decomposition.
+        
+        Flow:
+        1. Analyze goal → find relevant tools
+        2. Decompose → 1-3 micro-tasks
+        3. Execute each task → micro-prompting
+        4. Aggregate results → format output
         
         Args:
             goal: Natural language goal
@@ -81,96 +87,80 @@ class MicroPromptAgent:
             Execution results and summary
         """
         logger.info(f"🎯 Goal: {goal}")
-        logger.info(f"🧠 Using micro-prompting with validation")
+        logger.info(f"🧠 Using micro-task decomposition")
         
-        # Micro-prompt 0: Analyze goal and discover available tools
+        # Step 0: Analyze goal and discover relevant tools
         logger.info("\n" + "="*60)
-        logger.info("🔍 Step 0: Analyze goal and find relevant tools")
+        logger.info("🔍 Step 0: Find relevant tools")
         logger.info("="*60)
         tool_context = self._analyze_goal_and_tools(goal)
         
-        # Micro-prompt 1: Plan the simplest approach (single step if possible)
+        # Step 1: Decompose goal into micro-tasks
         logger.info("\n" + "="*60)
-        logger.info("📋 Step 1: Create execution plan")
+        logger.info("📋 Step 1: Decompose into micro-tasks")
         logger.info("="*60)
-        plan = self._create_simple_plan(goal, tool_context)
-        logger.info(f"   Plan: {plan['description']}")
-        logger.info(f"   Tool: {plan['tool']}")
-        logger.info(f"   Expected params: {plan['params']}")
+        tasks = self._decompose_goal(goal, tool_context)
         
-        # Micro-prompt 2: Validate the plan (optional - can be disabled for faster execution)
-        SKIP_VALIDATION = True  # 3B models are too strict, skip for now
-        
-        if not SKIP_VALIDATION:
-            logger.info("\n" + "="*60)
-            logger.info("✓ Step 2: Validate plan")
-            logger.info("="*60)
-            validation = self._validate_plan(goal, plan)
-            logger.info(f"   Validation: {validation['is_valid']}")
-            logger.info(f"   Reasoning: {validation['reasoning']}")
-            
-            if not validation['is_valid']:
-                logger.error(f"   Plan rejected: {validation['reasoning']}")
-                return {
-                    'success': False,
-                    'error': f"Plan validation failed: {validation['reasoning']}",
-                    'goal': goal
-                }
-        else:
-            logger.info("\n   ⚡ Skipping validation - executing plan directly")
-        
-        # Execute the tool
-        logger.info("\n" + "="*60)
-        logger.info(f"▶️  Step 3: Execute {plan['tool']}")
-        logger.info("="*60)
-        
-        try:
-            # Special case: "AI" tool means just use LLM to answer directly
-            if plan['tool'].upper() == 'AI' or plan['tool'] == 'llm_direct':
-                logger.info("   Using AI tool (direct LLM response)")
-                result = self._ai_tool_execute(goal, plan.get('context', ''))
-            else:
-                # Get tool object
-                tool = self.tools.get(plan['tool'])
-                if not tool:
-                    logger.warning(f"   Tool '{plan['tool']}' not found - falling back to AI tool")
-                    result = self._ai_tool_execute(goal, f"Tried to use {plan['tool']} but it doesn't exist")
-                else:
-                    result = self._execute_with_retry(
-                        tool=tool,
-                        params=plan['params']
-                    )
-            
-            # Micro-prompt 4: Validate result matches goal
-            logger.info("\n" + "="*60)
-            logger.info("✓ Step 4: Validate result matches goal")
-            logger.info("="*60)
-            result_validation = self._validate_result(goal, plan['tool'], result)
-            logger.info(f"   Valid: {result_validation['is_valid']}")
-            logger.info(f"   Reasoning: {result_validation['reasoning']}")
-            
-            # Micro-prompt 5: Format output for user
-            logger.info("\n" + "="*60)
-            logger.info("📊 Step 5: Format output for user")
-            logger.info("="*60)
-            formatted_output = self._format_final_output(goal, result)
-            
-            return {
-                'success': True,
-                'goal': goal,
-                'plan': plan,
-                'result': result,
-                'output': formatted_output,
-                'validated': result_validation['is_valid']
-            }
-            
-        except Exception as e:
-            logger.error(f"Execution failed: {e}")
+        if not tasks:
+            logger.error("   No tasks generated from goal")
             return {
                 'success': False,
-                'error': str(e),
+                'error': 'Could not decompose goal into tasks',
                 'goal': goal
             }
+        
+        logger.info(f"   Generated {len(tasks)} tasks:")
+        for task in tasks:
+            logger.info(f"      {task.index}. {task.description}")
+        
+        # Step 2-N: Execute each micro-task
+        all_results = []
+        for task in tasks:
+            logger.info("\n" + "="*60)
+            logger.info(f"▶️  Step {task.index + 1}: Execute '{task.description}'")
+            logger.info("="*60)
+            
+            try:
+                result = self._execute_micro_task(task, dry_run)
+                task.result = result
+                task.completed = True
+                all_results.append(result)
+                
+                # Store in context for next tasks
+                self.context[f'task_{task.index}_result'] = result
+                
+                logger.info(f"   ✅ Task {task.index} completed")
+                
+            except Exception as e:
+                logger.error(f"   ❌ Task {task.index} failed: {e}")
+                task.completed = False
+                # Continue to next task
+        
+        # Final step: Aggregate and format
+        logger.info("\n" + "="*60)
+        logger.info("📊 Final: Aggregate results and format")
+        logger.info("="*60)
+        
+        # Combine all results
+        combined_result = {
+            'tasks': [{'description': t.description, 'completed': t.completed, 'result': t.result} for t in tasks],
+            'all_results': all_results
+        }
+        
+        formatted_output = self._format_final_output(goal, combined_result)
+        
+        completed_count = sum(1 for t in tasks if t.completed)
+        success = completed_count > 0
+        
+        return {
+            'success': success,
+            'goal': goal,
+            'tasks': tasks,
+            'results': all_results,
+            'output': formatted_output,
+            'completed_tasks': completed_count,
+            'total_tasks': len(tasks)
+        }
     
     def _analyze_goal_and_tools(self, goal: str) -> str:
         """
@@ -193,9 +183,6 @@ class MicroPromptAgent:
                 f"- {tool.name}: {tool.description}"
                 for tool in relevant_tools[:10]  # Top 10 tools
             ])
-            # Add special note about llm_analyze_pseudo if not in list
-            if not any(t.name == 'llm_analyze_pseudo' for t in relevant_tools):
-                tool_list += "\n- llm_analyze_pseudo: Use LLM to format, parse, extract, or transform data"
             
             logger.info(f"   Found {len(relevant_tools)} relevant tools:")
             for tool in relevant_tools[:10]:
@@ -225,167 +212,6 @@ Answer: yes/no and which tools to use."""
         # Return tool context for decomposition
         return f"Available tools:\n{tool_list}\n\nTool analysis: {response_str}"
     
-    def _create_simple_plan(self, goal: str, tool_context: str) -> Dict[str, Any]:
-        """
-        Create the SIMPLEST single-step plan to achieve the goal.
-        
-        Returns a plan with: tool name, parameters, and description.
-        """
-        prompt = f"""Create ONE-STEP plan to achieve this goal.
-
-Goal: {goal}
-
-{tool_context}
-
-Available tool options:
-1. Use a specific API tool (from the list above)
-2. Use "AI" tool if:
-   - No specific API tool fits
-   - Request is for analysis/explanation
-   - Need to format/present information
-   - Simple question that doesn't need data fetching
-
-Rules:
-- Use ONLY ONE tool call
-- Be direct and simple
-- If goal says "last N items", ONLY set per_page=N (don't add date filters)
-- If goal asks for "last/recent/latest", don't filter by date - API returns recent items first
-- Keep params minimal - only required parameters
-- If no perfect tool exists, use "AI"
-
-Output format (JSON only):
-{{
-  "tool": "toolName_or_AI",
-  "params": {{"param1": "value1"}},
-  "description": "One sentence describing what this does"
-}}"""
-
-        response = self.ollama.generate(
-            prompt,
-            system="You create single-step plans. Output ONLY JSON.",
-            temperature=0.2
-        )
-        
-        response_str = str(response) if not isinstance(response, str) else response
-        
-        # Extract JSON
-        try:
-            if "```json" in response_str:
-                response_str = response_str.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_str:
-                response_str = response_str.split("```")[1].split("```")[0].strip()
-            
-            plan = json.loads(response_str)
-            return plan
-        except Exception as e:
-            logger.error(f"Failed to parse plan: {e}")
-            logger.error(f"Response: {response_str}")
-            raise ValueError(f"Invalid plan format: {response_str[:200]}")
-    
-    def _validate_plan(self, goal: str, plan: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Validate that the plan will actually achieve the goal.
-        
-        Returns: {is_valid: bool, reasoning: str}
-        """
-        prompt = f"""Will this plan achieve the goal? Answer honestly.
-
-Goal: {goal}
-
-Plan: Use tool '{plan['tool']}' with parameters {plan['params']}
-
-Questions to consider:
-1. Is this the right tool for the goal?
-2. Are the parameters correct?
-   - If goal says "last N activities", per_page=N is correct (fetches N most recent)
-   - If goal says "activities from date X", date filters are needed
-3. Will this give the user what they asked for?
-
-IMPORTANT: "last 5 activities" means "5 most recent activities", NOT specific IDs.
-The getMyActivities tool with per_page=5 returns the 5 most recent activities.
-
-Output format (JSON only):
-{{
-  "is_valid": true/false,
-  "reasoning": "Why this plan will/won't work"
-}}"""
-
-        response = self.ollama.generate(
-            prompt,
-            system="You validate plans. Output ONLY JSON with is_valid and reasoning.",
-            temperature=0.2
-        )
-        
-        response_str = str(response) if not isinstance(response, str) else response
-        
-        # Extract JSON
-        try:
-            if "```json" in response_str:
-                response_str = response_str.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_str:
-                response_str = response_str.split("```")[1].split("```")[0].strip()
-            
-            validation = json.loads(response_str)
-            return validation
-        except Exception as e:
-            logger.warning(f"Failed to parse validation, assuming valid: {e}")
-            return {"is_valid": True, "reasoning": "Could not parse validation"}
-    
-    def _validate_result(self, goal: str, tool_used: str, result: Any) -> Dict[str, Any]:
-        """
-        Validate that the tool result actually answers the user's goal.
-        
-        Returns: {is_valid: bool, reasoning: str}
-        """
-        # Simplify result for LLM
-        if isinstance(result, dict):
-            result_summary = {
-                'success': result.get('success'),
-                'count': result.get('count'),
-                'has_data': bool(result.get('activities') or result.get('kudos') or result.get('entries'))
-            }
-        else:
-            result_summary = str(result)[:200]
-        
-        prompt = f"""Does this result answer the user's goal?
-
-Goal: {goal}
-
-Tool used: {tool_used}
-Result summary: {result_summary}
-
-Questions:
-1. Did the tool return data?
-2. Is this the right kind of data for the goal?
-3. Should we format this data before showing the user?
-
-Output format (JSON only):
-{{
-  "is_valid": true/false,
-  "reasoning": "Why this result does/doesn't answer the goal"
-}}"""
-
-        response = self.ollama.generate(
-            prompt,
-            system="You validate results. Output ONLY JSON with is_valid and reasoning.",
-            temperature=0.2
-        )
-        
-        response_str = str(response) if not isinstance(response, str) else response
-        
-        # Extract JSON
-        try:
-            if "```json" in response_str:
-                response_str = response_str.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_str:
-                response_str = response_str.split("```")[1].split("```")[0].strip()
-            
-            validation = json.loads(response_str)
-            return validation
-        except Exception as e:
-            logger.warning(f"Failed to parse result validation: {e}")
-            return {"is_valid": True, "reasoning": "Could not parse validation"}
-    
     def _format_final_output(self, goal: str, result: Any) -> str:
         """
         Format the result in a user-friendly way using LLM.
@@ -413,18 +239,17 @@ Goal: {goal}
 Data:
 {data_str[:2000]}
 
-CRITICAL: 
-- If goal says "list 5" or "last 5", you MUST show ALL 5 items from the data
-- If goal asks for IDs, include the ID for EACH item
-- If goal asks for names, include the name for EACH item
-- Format as numbered list: 1. Name - ID: 12345
+Instructions:
+- Show ALL retrieved items (don't truncate)
+- If data includes activity names, IDs, types, kudos counts → show them all in a clear format
+- If goal asks for "people who gave kudos" but data only has kudos COUNT → clarify that detailed names require a follow-up query
+- Format as numbered list or table for clarity
+- Be specific and informative
 
-Example for "list 5 activities with IDs":
-1. Morning Run - ID: 12345678
-2. Evening Bike - ID: 23456789
-3. Afternoon Swim - ID: 34567890
-4. Night Walk - ID: 45678901
-5. Weekend Hike - ID: 56789012
+Example for dashboard feed:
+1. Morning Run (ID: 12345678) - Run by John Doe - 5 kudos
+2. Evening Bike (ID: 23456789) - Ride by Jane Smith - 12 kudos
+3. Afternoon Swim (ID: 34567890) - Swim by Bob Johnson - 3 kudos
 
 Now format ALL items in the data above:"""
 
@@ -438,51 +263,41 @@ Now format ALL items in the data above:"""
     
     def _decompose_goal(self, goal: str, tool_context: str = "") -> List[MicroTask]:
         """
-        Micro-prompt 1: Break goal into 1-3 simple steps.
+        Micro-prompt 1: Break goal into MINIMAL steps (prefer 1, max 2).
         
-        Context size: ~150-300 tokens (includes tool context)
+        Context size: ~150-300 tokens
         """
-        # Build prompt with tool awareness
-        prompt = f"""Break this goal into the SIMPLEST steps (1-2 steps is ideal, max 3).
+        prompt = f"""Break this goal into the absolute MINIMUM steps needed.
 
 Goal: {goal}
 
 {tool_context}
 
-CRITICAL RULES:
-- Use available API tools directly
-- MINIMAL steps only - don't add extra verification/filtering unless explicitly requested
-- For "list/show/get" goals: Usually just 1-2 steps total
-- Don't filter by kudos unless goal asks for it
-- Don't check state unless goal asks for it
-- For formatting/parsing/displaying data: Use llm_analyze_pseudo tool
-- Each step = ONE direct API call
+RULES - READ CAREFULLY:
+1. **PREFER 1 STEP** if a single tool can do it
+2. Use 2 steps ONLY if you must chain tools (e.g., get data, then give kudos)
+3. Check tool descriptions - many already return the data you need
+4. Don't add unnecessary "format" or "compile" steps - that happens automatically
 
-EXAMPLES:
+EXAMPLES OF CORRECT DECOMPOSITION:
 
-Goal: "List my last 3 Strava activities with IDs"
-Correct (2 steps):
-1. Call getMyActivities with per_page=3
-2. Use llm_analyze_pseudo to extract and format activity IDs and names
-
+Goal: "Get my activities from last 24h with kudos counts"
+Correct (1 step):
+1. Call getDashboardFeed with hours_ago=24
 Wrong (overcomplicated):
-1. Get 200 activities
-2. Filter by kudos
-3. Limit to 3
-4. Format
-5. Display
+1. Get activities
+2. Get kudos for each
+3. Compile report
 
-Goal: "Give kudos to activities from last 24 hours"
+Goal: "Get activities and give kudos to each"
 Correct (2 steps):
 1. Call getDashboardFeed with hours_ago=24
-2. Call giveKudos for each activity ID
+2. Call giveKudos for each activity_id
 
-Now break down this goal into 1-2 simple steps:
+Now decompose this goal - aim for 1 step, maximum 2:
 Goal: {goal}
 
-Output (just numbered list):
-1. 
-2."""
+Output (numbered list only, no explanation):"""
         
         response = self.ollama.generate(
             prompt,

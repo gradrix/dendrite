@@ -312,6 +312,46 @@ class StravaClient:
                 return response.text
                 
         except requests.exceptions.HTTPError as e:
+            # Check if it's a 401 and we can retry with token refresh
+            if e.response and e.response.status_code == 401:
+                logger.warning("⚠️  Authentication failed (401 Unauthorized)")
+                logger.info("🔄 Attempting to refresh token and re-authenticate...")
+                
+                # Try to refresh the token
+                if self._refresh_token():
+                    logger.info("✅ Token refreshed successfully")
+                    # For cookie-based API, we may also need to refresh the session
+                    # Try to re-extract CSRF token with new session
+                    self._extract_csrf_token()
+                    
+                    # Retry the request once with refreshed credentials
+                    logger.info("🔄 Retrying request with new credentials...")
+                    try:
+                        if headers is None:
+                            headers = self._get_headers()
+                        
+                        response = self.session.request(
+                            method=method,
+                            url=url,
+                            headers=headers,
+                            params=params,
+                            data=data,
+                            json=json_data,
+                            timeout=30
+                        )
+                        response.raise_for_status()
+                        
+                        try:
+                            return response.json()
+                        except:
+                            return response.text
+                    except Exception as retry_error:
+                        logger.error(f"❌ Retry after token refresh also failed: {retry_error}")
+                        raise
+                else:
+                    logger.error("❌ Token refresh failed")
+                    logger.info("💡 Run ./refresh_token.sh or ./get_token_manual.sh to refresh manually")
+            
             # Already logged detailed info above, just re-raise
             raise
         except Exception as e:
@@ -700,7 +740,7 @@ def get_client() -> StravaClient:
 
 @tool(
     name="getDashboardFeed",
-    description="Get recent activities from dashboard feed (you and your friends). Returns summary: athlete name, activity type, whether you gave kudos. Use hours_ago to filter recent activities (e.g., hours_ago=1 for last hour)",
+    description="Get recent activities from YOUR FRIENDS' dashboard feed (NOT your own activities - use getMyActivities for that). Returns activities posted by people you follow. Each entry includes: athlete name, activity type, activity name, activity_id, and TOTAL_KUDOS_COUNT (already calculated). Use hours_ago to filter (e.g., hours_ago=24 for last day). NO need to call getActivityKudos separately - kudos count is already included.",
     parameters=[
         {"name": "hours_ago", "type": "int", "required": False, "description": "Filter activities from last N hours (e.g., 1 for last hour, 24 for last day)"},
         {"name": "num_entries", "type": "int", "required": False, "default": 20, "description": "Number of activities to fetch (default 20)"}
@@ -1012,7 +1052,7 @@ def give_kudos_to_participants(activity_id: int, delay_seconds: float = 1.0) -> 
 
 @tool(
     name="getMyActivities",
-    description="Get your own activities with optional date filtering",
+    description="Get YOUR OWN personal activities (runs, rides, etc. that YOU posted - NOT your friends' activities). Use this when asked for 'my activities', 'my runs', 'my personal activities'. Returns activities with details like name, type, distance, time, kudos count. Supports date filtering with after_unix/before_unix timestamps.",
     parameters=[
         {"name": "after_unix", "type": "int", "required": False, "description": "Unix timestamp - only activities after this time"},
         {"name": "before_unix", "type": "int", "required": False, "description": "Unix timestamp - only activities before this time"},

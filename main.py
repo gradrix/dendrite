@@ -103,37 +103,33 @@ class AIAgent:
     
     def execute_goal(self, goal: str):
         """
-        Execute a natural language goal using micro-prompting agent.
+        Execute a natural language goal using neuron-based agent.
         
-        Perfect for small models (3B params) - uses many tiny LLM calls
-        instead of few large ones.
+        Uses self-organizing micro-prompt chains with automatic list iteration.
+        Perfect for small models (3B params).
         
         Args:
-            goal: Natural language description (e.g., "List my last 3 activities")
+            goal: Natural language description (e.g., "Get activities with kudos details")
         """
-        from agent.micro_prompt_agent import MicroPromptAgent
+        from agent.neuron_agent import NeuronAgent
         
         logger.info("============================================================")
-        logger.info("🧠 Micro-Prompting Agent (Neuron-Like Architecture)")
+        logger.info("🧠 Neuron Agent (Self-Organizing Architecture)")
         logger.info("============================================================")
         logger.info(f"Goal: {goal}")
         logger.info("")
         
-        # Create micro-prompt agent
-        agent = MicroPromptAgent(
+                # Create agent with NeuronAgent (self-organizing micro-prompt chains with automatic list iteration)
+        agent = NeuronAgent(
             ollama=self.ollama,
-            tool_registry=self.registry,
-            max_retries=3
+            tool_registry=self.registry
         )
-        
-        # Get dry_run setting
-        dry_run = self.config.get('agent', {}).get('dry_run', False)
         
         start_time = time.time()
         
         try:
-            # Execute goal with micro-prompting
-            result = agent.execute_goal(goal, dry_run=dry_run)
+            # Execute goal with neuron chains (depth starts at 0)
+            result = agent.execute_goal(goal, depth=0)
             
             duration = time.time() - start_time
             
@@ -144,17 +140,18 @@ class AIAgent:
             logger.info("============================================================")
             logger.info(f"Goal: {goal}")
             
-            # Handle both old multi-task and new single-step formats
-            if 'tasks_completed' in result:
-                logger.info(f"Tasks completed: {result['tasks_completed']}/{result['tasks_total']}")
-            elif 'plan' in result:
-                logger.info(f"Plan: {result['plan'].get('description', 'Single-step execution')}")
-                logger.info(f"Validated: {'✅' if result.get('validated', False) else '⚠️'}")
+            # Handle NeuronAgent format
+            if result.get('success'):
+                logger.info(f"Neurons executed: {len(result.get('neurons', []))}")
+                logger.info(f"Recursion depth: {result.get('depth', 0)}")
+                logger.info(f"Status: ✅ Success")
+            else:
+                logger.info(f"Status: ❌ Failed - {result.get('error', 'Unknown error')}")
             
             logger.info(f"Duration: {duration:.2f}s")
             logger.info("")
             logger.info("Output:")
-            logger.info(result.get('output', str(result.get('result', 'No output'))))
+            logger.info(result.get('final', str(result.get('results', 'No output'))))
             logger.info("============================================================")
             
             return result

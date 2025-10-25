@@ -1,16 +1,18 @@
 # Ultra-Minimal Strava Monitor
 # Radical simplification: 2 lines instead of 130!
 
-goal: "Check for new activities in the last 24 hours, make non-Walk activities public (Rides must be over 10km), enable 3D satellite maps for public activities, and track kudos from all activities"
+goal: "Get my personal Strava activities from the last 24 hours and show each activity with its name, type, and total kudos count in a summary report."
 
 schedule: hourly
 
 # That's it! The micro-prompting agent will:
-# 1. Break this goal into micro-tasks
-# 2. Discover tools as needed (not all at once)
+# 1. Break this goal into micro-tasks (1-2 steps)
+# 2. Discover relevant tools (getDashboardFeed or getMyActivities)
 # 3. Execute with tiny LLM prompts (100-200 tokens each)
-# 4. Gradually build up the solution
+# 4. Format results clearly
 # 5. Self-correct on errors
 #
-# Total execution: ~10-15 micro-prompts instead of 2-3 huge prompts
-# Perfect for 3B models like qwen3:3b or llama3.2:3b!
+# Note: To get the NAMES of people who gave kudos (not just count),
+# you would need a second query with getActivityKudos for each activity.
+# That's expensive for many activities, so this focuses on the summary.
+

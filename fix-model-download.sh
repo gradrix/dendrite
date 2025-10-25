@@ -60,7 +60,7 @@ echo ""
 echo "Choose a solution:"
 echo ""
 echo "1. Cancel and use smaller model (llama3.2:3b - 2GB, recommended)"
-echo "2. Cancel and retry llama3.1:8b download"
+echo "2. Cancel and retry deepseek-r1:32b download"
 echo "3. Just cancel - I'll download manually later"
 echo "4. Check download status and wait"
 echo ""
@@ -105,7 +105,7 @@ case $choice in
         ;;
         
     2)
-        print_header "Retrying llama3.1:8b Download"
+        print_header "Retrying deepseek-r1:32b Download"
         
         print_info "Stopping current download..."
         docker exec $OLLAMA_CONTAINER_NAME pkill -f "ollama.*pull" 2>/dev/null || true
@@ -116,7 +116,7 @@ case $choice in
         
         curl -X POST "http://localhost:${OLLAMA_PORT}/api/pull" \
             -H "Content-Type: application/json" \
-            -d '{"name": "qwen3:4b"}' \
+            -d '{"name": "deepseek-r1:32b"}' \
             --no-buffer | while IFS= read -r line; do
                 if echo "$line" | grep -q '"status"'; then
                     status=$(echo "$line" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
