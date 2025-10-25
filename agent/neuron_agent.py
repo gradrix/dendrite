@@ -1716,6 +1716,13 @@ Answer yes or no:"""
         # This handles cases where a formatting neuron succeeded but later neurons failed
         formatting_keywords = ['format', 'report', 'present', 'show', 'display', 'human-readable']
         
+        # Extract quantity constraints from goal (e.g., "first 3", "top 5")
+        import re
+        quantity_match = re.search(r'\b(first|top|last)\s+(\d+)\b', goal.lower())
+        target_count = int(quantity_match.group(2)) if quantity_match else None
+        
+        # Collect all successful formatting results
+        formatting_results = []
         for neuron, result in zip(reversed(neurons), reversed(results)):
             is_formatting = any(kw in neuron.description.lower() for kw in formatting_keywords)
             if not is_formatting:
@@ -1723,16 +1730,33 @@ Answer yes or no:"""
                 
             # Check for AI response type
             if isinstance(result, dict) and result.get('type') == 'ai_response':
-                logger.info(f"📝 Using formatted answer from neuron {neuron.index} (AI response)")
-                return {
-                    'summary': result.get('answer', ''),
-                    'detailed_results': results
-                }
+                formatting_results.append((neuron.index, result.get('answer', ''), 'ai'))
             # Check for executeDataAnalysis result with string output
             elif isinstance(result, dict) and result.get('success') and 'result' in result and isinstance(result['result'], str):
-                logger.info(f"📝 Using formatted answer from neuron {neuron.index} (Python result)")
+                formatting_results.append((neuron.index, result['result'], 'python'))
+        
+        # If we have formatting results, pick the best one
+        if formatting_results:
+            best_result = None
+            
+            # If goal specifies a quantity, prefer results with that many lines
+            if target_count:
+                for idx, text, rtype in formatting_results:
+                    line_count = len([l for l in text.strip().split('\n') if l.strip()])
+                    if line_count == target_count:
+                        logger.info(f"📝 Using formatted answer from neuron {idx} ({rtype}, matches target count {target_count})")
+                        best_result = text
+                        break
+            
+            # Otherwise, use the most recent successful one
+            if not best_result and formatting_results:
+                idx, text, rtype = formatting_results[0]  # Most recent
+                logger.info(f"📝 Using formatted answer from neuron {idx} ({rtype})")
+                best_result = text
+            
+            if best_result:
                 return {
-                    'summary': result['result'],
+                    'summary': best_result,
                     'detailed_results': results
                 }
         
