@@ -174,7 +174,66 @@ except KeyError as e:
 - Corrective neurons for goal completion
 - No user intervention required
 
-### 5. Memory Overseer
+### 5. Intelligent Result Aggregation
+
+The agent uses smart aggregation to detect and prioritize formatted results:
+
+```python
+# Multiple neurons executed:
+# neuron_0_1: Convert dates → timestamps
+# neuron_0_2: Fetch activities → 48 activities (raw data)
+# neuron_0_3: Filter first 3 → [3 dict objects]
+# neuron_0_4: Format → "Activity 1\nActivity 2\nActivity 3"
+
+# Aggregation scans backwards for formatting results
+def aggregate_results(goal, neurons, results):
+    # Extract quantity constraint from goal
+    "Get my first 3 activities..."  →  target_count = 3
+    
+    # Check each neuron's RESULT TYPE (not just description)
+    for neuron, result in reversed(neurons, results):
+        if result is executeDataAnalysis string output:
+            line_count = count_non_empty_lines(result)
+            
+            # Prefer results matching target count
+            if line_count == 3:  # Matches "first 3"!
+                return result  ✓ Perfect match
+    
+    # Fallback: most recent formatted result
+```
+
+**Key Insights:**
+
+1. **Detect by Result Type, Not Keywords**
+   - Checks if result is a `string` from `executeDataAnalysis`
+   - Doesn't rely on "format" keyword in description
+   - neuron "Filter first 3" → produces formatted string → detected!
+
+2. **Quantity Constraint Matching**
+   - Extracts "first 3", "top 5", "last 10" from goal
+   - Counts non-empty lines in formatted results
+   - Prefers results with matching line counts
+   - Prevents returning 48 activities when goal says "first 3"
+
+3. **Priority Order**
+   - ① Result matching exact line count
+   - ② Most recent formatted string result
+   - ③ Any string result from executeDataAnalysis
+   - ④ Last successful result
+
+**Why This Matters:**
+
+Prevents meta-summaries like:
+```
+❌ "The goal was to retrieve and display the first three activities..."
+✓ "Morning Snowboard - 57944.4m on 2024-01-31
+   Lunch Snowboard - 44090.3m on 2024-01-30
+   Morning Snowboard - 46589.7m on 2024-01-29"
+```
+
+See [AGGREGATION.md](AGGREGATION.md) for detailed explanation.
+
+### 6. Memory Overseer
 
 Intelligent pre-execution context loading:
 
