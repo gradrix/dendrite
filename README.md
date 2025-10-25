@@ -903,50 +903,122 @@ curl -X POST http://localhost:11434/api/pull \
   -d '{"name": "gemma2:9b"}'
 ```
 
-#### Adding New Scripts
-Template for new utility scripts:
-```bash
-#!/bin/bash
-set -e
-source "$(dirname "$0")/.env"  # Load config
-# Your logic here
+#### Extending the Agent
+
+**Adding New Tools:**
+
+Create a new tool in `tools/` directory:
+
+```python
+# tools/my_tools.py
+def my_custom_tool(param1: str, param2: int) -> dict:
+    """
+    Tool description that the LLM will see.
+    
+    Args:
+        param1: Description of parameter
+        param2: Another parameter
+    
+    Returns:
+        dict with 'success' and result data
+    """
+    # Your logic here
+    return {
+        'success': True,
+        'result': 'Your data'
+    }
 ```
 
-#### Integrating with Applications
-The API is RESTful and language-agnostic:
-- **Python**: `requests` library
-- **JavaScript**: `fetch` or `axios`
-- **Go**: `net/http` package
-- **Java**: `HttpClient`
-- **Any language with HTTP support**
+Register it in `agent/tool_registry.py`:
+
+```python
+from tools.my_tools import my_custom_tool
+
+registry.register_tool(
+    name="myCustomTool",
+    func=my_custom_tool,
+    description="What this tool does"
+)
+```
+
+The agent will now auto-discover and use your tool!
+
+**Adding New API Integrations:**
+
+Follow the pattern in `tools/strava_tools.py`:
+1. Create functions with clear docstrings
+2. Return `{'success': bool, 'data': ...}` format
+3. Register in tool registry
+4. Agent automatically figures out when to use them
+
+**Creating Custom Instructions:**
+
+```yaml
+# instructions/my_task.yaml
+goal: "Your natural language goal here"
+description: "Optional: What this accomplishes"
+```
+
+Run with:
+```bash
+./start-agent.sh --once --instruction my_task
+```
 
 ### Testing Strategy
 
-1. **Manual Testing**: Run `./test-ollama.sh`
-2. **API Testing**: Use included curl examples
-3. **Integration Testing**: Test with your application
-4. **Load Testing**: Use tools like `wrk` or `ab` for benchmarking
+1. **Manual Testing**: Run goals with `./start-agent.sh --goal "your goal"`
+2. **Instruction Testing**: Create test files in `instructions/test_*.yaml`
+3. **Watch Execution**: Check `./scripts/logs.sh` for neuron decomposition
+4. **State Inspection**: Use `./scripts/state.sh` to see saved data
 
 ### Monitoring and Logs
 
-#### View Ollama Logs
+#### View Agent Execution Logs
 ```bash
-docker logs -f ollama
+# Real-time logs
+./scripts/logs.sh
+
+# Or directly with Docker
+docker logs -f dendrite-agent
 ```
 
-#### View Setup Logs
-```bash
-docker-compose logs ollama-setup
+#### View Neuron Decomposition
+The logs show beautiful tree visualization:
+```
+🎯 Goal: "How many running activities in September?"
+├─ Neuron 1: Convert dates → timestamps
+│  ├─ Sub-neuron 1.1: September 1 ✅
+│  └─ Sub-neuron 1.2: September 30 ✅
+├─ Neuron 2: Fetch activities ✅
+└─ Neuron 3: Count running ✅
+
+Result: "28 activities"
+Duration: 12.09s
 ```
 
-#### Check Resource Usage
+#### Check Agent State
 ```bash
+# List saved state
+./scripts/state.sh
+
+# Check cached data
+ls -lh state/data_cache/
+```
+
+#### Monitor Resource Usage
+```bash
+# Ollama container stats
 docker stats ollama
+
+# Agent container stats  
+docker stats dendrite-agent
 ```
 
-## API Documentation
+## Ollama API Reference
 
-Full Ollama API documentation: https://github.com/ollama/ollama/blob/main/docs/api.md
+The underlying Ollama API documentation: https://github.com/ollama/ollama/blob/main/docs/api.md
+
+(Most users won't need this - the agent handles LLM communication automatically!)
 
 ## Why This Architecture Is Different
 
