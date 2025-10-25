@@ -419,6 +419,23 @@ class StravaClient:
                 except:
                     if response.text:
                         logger.error(f"   Response: {response.text[:500]}")
+                
+                # For 401, try to refresh token BEFORE raising
+                if response.status_code == 401:
+                    logger.warning("⚠️  API token invalid/expired, attempting refresh...")
+                    if self._refresh_token():
+                        logger.info("✅ Token refreshed, retrying request...")
+                        headers = self._get_api_headers()
+                        response = self.session.request(
+                            method="GET",
+                            url=url,
+                            headers=headers,
+                            params=params,
+                            timeout=30
+                        )
+                        # If retry also fails, fall through to raise_for_status below
+                    else:
+                        logger.error("❌ Token refresh failed")
             
             response.raise_for_status()
             activities = response.json()
@@ -431,47 +448,7 @@ class StravaClient:
                 return []
             
         except requests.exceptions.HTTPError as e:
-            if e.response and e.response.status_code == 401:
-                logger.warning("⚠️  API token is invalid or expired (401 Unauthorized)")
-                logger.info("🔄 Attempting to refresh token...")
-                
-                # Try to refresh the token
-                if self._refresh_token():
-                    logger.info("✅ Token refreshed, retrying request...")
-                    # Retry with new token
-                    headers = self._get_api_headers()
-                    try:
-                        response = self.session.request(
-                            method="GET",
-                            url=url,
-                            headers=headers,
-                            params=params,
-                            timeout=30
-                        )
-                        
-                        if response.status_code != 200:
-                            logger.error(f"❌ Retry failed with status {response.status_code}")
-                            try:
-                                error_data = response.json()
-                                logger.error(f"   Error: {error_data}")
-                            except:
-                                logger.error(f"   Response: {response.text[:500]}")
-                        
-                        response.raise_for_status()
-                        activities = response.json()
-                        
-                        if isinstance(activities, list):
-                            logger.info(f"Retrieved {len(activities)} activities from API v3 (after refresh)")
-                            return activities
-                    except Exception as retry_error:
-                        logger.error(f"❌ Retry failed after token refresh: {retry_error}")
-                        return []
-                else:
-                    logger.error("Could not refresh token. Get a new one:")
-                    logger.error("Run: ./get_token_manual.sh auth <CLIENT_ID>")
-                    return []
-            else:
-                logger.error(f"HTTP error: {e}")
+            logger.error(f"HTTP error: {e}")
             return []
         except Exception as e:
             logger.error(f"Failed to get athlete activities: {e}")

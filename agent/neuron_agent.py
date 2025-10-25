@@ -751,18 +751,24 @@ Output numbered list (1-4 steps, NO duplicates):"""
         # Otherwise, ask LLM to pick from top 5
         tool_list = "\n".join([f"- {t.name}: {t.description}" for t in top_tools])
         
-        prompt = f"""Which tool is BEST for this?
+        prompt = f"""Select the BEST tool for this task:
 
 Task: {neuron_desc}
 
-Tools:
+Available tools:
 {tool_list}
 
-Output only tool name:"""
+Instructions:
+- Choose the tool that most directly accomplishes the task
+- For fetching data: use get/fetch tools
+- For converting dates: use timestamp tools
+- For counting/filtering: if data already exists, don't use tools (use AI analysis)
+
+Output ONLY the tool name:"""
         
         response = self.ollama.generate(
             prompt,
-            system="Select tool. Output only name.",
+            system="You select tools. Output only the tool name, nothing else.",
             temperature=0.1
         )
         
@@ -1210,7 +1216,7 @@ Answer yes or no:"""
         return 'yes' in response_str.lower()
     
     def _micro_aggregate(self, goal: str, neurons: List[Neuron], results: List[Any]) -> Any:
-        """Micro-prompt: Combine neuron results."""
+        """Micro-prompt: Combine neuron results into final answer."""
         
         # If only one neuron, return its result directly
         if len(neurons) == 1:
@@ -1218,24 +1224,43 @@ Answer yes or no:"""
         
         # Build summary of what each neuron did
         summary = "\n".join([
-            f"{n.index}. {n.description} → {self._summarize_result(r)}"
+            f"Step {n.index + 1}: {n.description}\n  Result: {self._summarize_result(r)}"
             for n, r in zip(neurons, results)
         ])
         
-        prompt = f"""Combine these results to answer the goal.
+        # Detect if this is a question that needs a simple answer
+        is_question = any(word in goal.lower() for word in ['how many', 'what', 'which', 'when', 'where', 'who', 'count'])
+        
+        if is_question:
+            prompt = f"""Answer this question using the results:
+
+Question: {goal}
+
+Steps taken:
+{summary}
+
+Provide a direct, concise answer (1-2 sentences):"""
+            
+            response = self.ollama.generate(
+                prompt,
+                system="Answer questions directly and concisely. For 'how many' questions, start with the number.",
+                temperature=0.2
+            )
+        else:
+            prompt = f"""Summarize what was accomplished:
 
 Goal: {goal}
 
-Results:
+Steps:
 {summary}
 
-Output a combined summary (2-3 sentences):"""
-        
-        response = self.ollama.generate(
-            prompt,
-            system="Combine results concisely.",
-            temperature=0.3
-        )
+Provide a brief summary (2-3 sentences):"""
+            
+            response = self.ollama.generate(
+                prompt,
+                system="Summarize accomplishments concisely.",
+                temperature=0.3
+            )
         
         response_str = str(response) if not isinstance(response, str) else response
         
@@ -1262,28 +1287,52 @@ Output a combined summary (2-3 sentences):"""
     def _micro_ai_response(self, neuron_desc: str) -> Dict[str, Any]:
         """Fallback: Use AI to answer directly using context data."""
         
-        # Build context summary
+        # Build context summary - include actual data structures
         context_summary = ""
         if self.context:
             context_summary = "\n\nAvailable data:"
             for key, value in list(self.context.items())[:10]:
                 if isinstance(value, dict):
-                    # Show the actual data
-                    context_summary += f"\n  {key}: {json.dumps(value, indent=2)[:300]}"
+                    # For activities list, show structure clearly
+                    if 'activities' in value:
+                        activities = value['activities']
+                        if isinstance(activities, list) and len(activities) > 0:
+                            context_summary += f"\n  {key}: List of {len(activities)} activities"
+                            # Show first activity structure
+                            first_activity = activities[0]
+                            context_summary += f"\n    Each activity has: {', '.join(first_activity.keys())}"
+                            context_summary += f"\n    Example: {json.dumps(first_activity, indent=4)[:500]}"
+                    else:
+                        context_summary += f"\n  {key}: {json.dumps(value, indent=2)[:400]}"
                 else:
                     context_summary += f"\n  {key}: {value}"
         
-        prompt = f"""Answer this task using the available data (no tools available):
-
-Task: {neuron_desc}
+        # Improved prompt with specific instructions for common tasks
+        task_type = ""
+        if any(word in neuron_desc.lower() for word in ['count', 'how many']):
+            task_type = "\n\nYou are counting. Look at the data and count matching items. Output ONLY the number."
+        elif any(word in neuron_desc.lower() for word in ['filter', 'find', 'get']):
+            task_type = "\n\nYou are filtering. Look at the data and find matching items. List them clearly."
+        elif any(word in neuron_desc.lower() for word in ['format', 'report', 'present']):
+            task_type = "\n\nYou are formatting. Present the data in a clear, readable format."
+        
+        prompt = f"""Task: {neuron_desc}
 {context_summary}
+{task_type}
 
-Provide a clear, formatted response:"""
+Instructions:
+1. Examine the available data carefully
+2. For lists, iterate through items and check each one
+3. For counting: Output the exact count as a number
+4. For filtering: List all matching items
+5. Be precise and use the actual data provided
+
+Your answer:"""
         
         response = self.ollama.generate(
             prompt,
-            system="Answer tasks directly using provided data. Format responses clearly.",
-            temperature=0.3
+            system="You analyze data precisely. Count items by checking each one. Filter by examining properties. Be accurate.",
+            temperature=0.1  # Lower temperature for more deterministic analysis
         )
         
         response_str = str(response) if not isinstance(response, str) else response

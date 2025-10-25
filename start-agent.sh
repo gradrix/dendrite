@@ -33,6 +33,7 @@ print_header() {
 MODE="scheduler"
 INSTRUCTION=""
 USE_V2=false
+TEXT_OUTPUT=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -44,6 +45,10 @@ while [[ $# -gt 0 ]]; do
             MODE="instruction"
             INSTRUCTION="$2"
             shift 2
+            ;;
+        --text)
+            TEXT_OUTPUT=true
+            shift
             ;;
         --v2)
             USE_V2=true
@@ -141,17 +146,24 @@ if [ "$USE_V2" = true ]; then
     print_info "Using v2 step-by-step execution"
 fi
 
+# Build text output flag if needed
+TEXT_FLAG=""
+if [ "$TEXT_OUTPUT" = true ]; then
+    TEXT_FLAG="--text"
+    print_info "Using text output mode (clean answers)"
+fi
+
 # Determine the command to run
 case $MODE in
     once)
         print_header "Running Agent Once"
         print_info "Agent will run all instructions once and exit"
-        $DOCKER_COMPOSE run --rm agent python main.py --once $V2_FLAG
+        $DOCKER_COMPOSE run --rm agent python main.py --once $V2_FLAG $TEXT_FLAG
         ;;
     instruction)
         print_header "Running Specific Instruction"
         print_info "Instruction: $INSTRUCTION"
-        $DOCKER_COMPOSE run --rm agent python main.py --instruction "$INSTRUCTION" $V2_FLAG
+        $DOCKER_COMPOSE run --rm agent python main.py --instruction "$INSTRUCTION" $V2_FLAG $TEXT_FLAG
         ;;
     scheduler)
         print_header "Starting Agent Scheduler"
