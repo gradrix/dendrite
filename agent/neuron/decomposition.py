@@ -22,7 +22,7 @@ class Neuron:
     error: str = None
 
 
-def micro_decompose(goal: str, depth: int, config: Dict, ollama) -> List[Neuron]:
+def micro_decompose(goal: str, depth: int, config: Dict, ollama, tools=None) -> List[Neuron]:
     """
     Micro-prompt: Decompose goal into 1-4 neurons.
     
@@ -31,6 +31,7 @@ def micro_decompose(goal: str, depth: int, config: Dict, ollama) -> List[Neuron]
         depth: Current recursion depth
         config: Configuration dictionary (contains force_python_counting setting)
         ollama: Ollama client for LLM calls
+        tools: Optional list of available tools (for dynamic tool discovery)
         
     Returns:
         List of Neuron objects (1-4 neurons)
@@ -38,36 +39,57 @@ def micro_decompose(goal: str, depth: int, config: Dict, ollama) -> List[Neuron]
     # STEP 0: Get expert strategy recommendation first
     strategy_advice = get_strategy_advice(goal, config, ollama)
     
+    # Build tool catalog if tools provided
+    tool_catalog = ""
+    if tools:
+        tool_catalog = "\n\nAVAILABLE TOOLS:\n"
+        # Group tools by category
+        time_tools = [t for t in tools if any(x in t.name.lower() for x in ['date', 'time', 'timestamp'])]
+        data_tools = [t for t in tools if any(x in t.name.lower() for x in ['activities', 'kudos', 'feed', 'strava'])]
+        analysis_tools = [t for t in tools if any(x in t.name.lower() for x in ['execute', 'analysis', 'state'])]
+        
+        if time_tools:
+            tool_catalog += "\n📅 TIME TOOLS:\n"
+            for t in time_tools[:5]:  # Limit to avoid token overflow
+                tool_catalog += f"  - {t.name}: {t.description[:100]}...\n"
+        
+        if data_tools:
+            tool_catalog += "\n🏃 DATA TOOLS:\n"
+            for t in data_tools[:5]:
+                tool_catalog += f"  - {t.name}: {t.description[:100]}...\n"
+        
+        if analysis_tools:
+            tool_catalog += "\n🐍 ANALYSIS TOOLS:\n"
+            for t in analysis_tools[:3]:
+                tool_catalog += f"  - {t.name}: {t.description[:100]}...\n"
+    
     prompt = f"""Break this goal into 1-4 simple steps. NO DUPLICATES.
 
 Goal: {goal}
 
 {strategy_advice}
+{tool_catalog}
 
-Rules:
-- Each step = ONE action (ONE tool call OR one AI response)
-- If goal asks "how many X activities", that's typically: (1) convert dates, (2) fetch ALL activities, (3) use executeDataAnalysis with Python to count type=X
-- When fetching data, get ALL data first, then filter/analyze in a separate step
-- Format/display/report steps go at the end
-- NO DUPLICATE STEPS - each step must be different
-- IMPORTANT: If goal mentions a date period (like "January 2024", "September 2025", "last week"):
-  * First step: Use getDateRangeTimestamps for the month/period (returns BOTH start AND end timestamps in one call)
-  * Second step: Fetch data using those timestamps
-  * Third step: Use executeDataAnalysis to count/filter (NO new fetch, work with existing data)
-  * Fourth step: Format results
-- If goal asks for a specific activity TYPE (e.g., "running activities", "rides"):
-  * The filtering step should say "Use executeDataAnalysis to count activities where type=Run"
-  * Do NOT rely on AI counting - use Python for accurate counting
+CORE PRINCIPLES:
+1. Each step = ONE atomic action (ONE tool call OR one computation)
+2. Think about the DATA FLOW: what data does each step need from previous steps?
+3. For "for each X do Y" patterns → fetch X first, then iterate (dendrites will spawn automatically)
+4. For counting/filtering large lists → use executeDataAnalysis with Python (100% accurate)
+5. For date/time → check AVAILABLE TOOLS above, pick the right one for the time period
+6. NO DUPLICATES - each step must be unique
 
-Examples:
-- "How many runs in Jan 2024?" → (1) Use getDateRangeTimestamps for January 2024, (2) Fetch all activities, (3) Use executeDataAnalysis to count where sport_type contains 'Run'
-- "Show my 3 rides from last month" → (1) Use getDateRangeTimestamps for last month, (2) Fetch all activities, (3) Use executeDataAnalysis to filter type=Ride and take first 3, (4) Format
+SMART DECOMPOSITION:
+- Look at available tools and pick the RIGHT one for the task
+- If goal mentions "last N hours/days" → look for tools with "hours" or "relative" in the name
+- If goal mentions "January 2024" or "September 2025" → look for tools with "range" in the name
+- If goal says "for each X get Y" → Step 1: fetch list of X, Step 2: "For each X call [tool] to get Y"
+- Don't hardcode - be adaptive based on what tools are available
 
 Output numbered list (1-4 steps, NO duplicates):"""
     
     response = ollama.generate(
         prompt,
-        system="Decompose goals into minimal steps. NO duplicates. Prefer executeDataAnalysis for counting/filtering. Output numbered list only.",
+        system="You are an intelligent task decomposer. Analyze the goal, look at available tools, and create a smart execution plan. Be adaptive, not prescriptive.",
         temperature=0.2  # Lower temperature for more deterministic output
     )
     

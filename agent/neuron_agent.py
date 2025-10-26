@@ -345,7 +345,7 @@ If none relevant, output:
     
     def _micro_decompose(self, goal: str, depth: int) -> List[Neuron]:
         """Micro-prompt: Decompose goal into 1-4 neurons."""
-        return decomposition.micro_decompose(goal, depth, self.config, self.ollama)
+        return decomposition.micro_decompose(goal, depth, self.config, self.ollama, self.tools.list_tools())
     
     def _get_strategy_advice(self, goal: str) -> str:
         """Get expert strategy advice for approaching the goal."""
