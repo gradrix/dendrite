@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 @tool(
     name="executeDataAnalysis",
-    description="Execute Python code for 100% accurate counting, filtering, and FORMATTING. CRITICAL: Use this for ANY counting task - AI models miscount, Python doesn't. For FORMATTING tasks with disk references: 1) Load data with load_data_reference(), 2) Build human-readable STRING output (not raw dicts). Access data via context keys like data['neuron_0_2']. Check if '_ref_id' exists - if yes, must load first. Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
+    description="Execute Python code for 100% accurate counting, filtering, and FORMATTING. CRITICAL: Use this for ANY counting task - AI models miscount, Python doesn't. For FORMATTING tasks: ALWAYS follow 3 steps: 1) Load data: loaded = load_data_reference(data['neuron_X_Y']['_ref_id']), 2) Extract list: my_list = loaded.get('items') or loaded.get('data') or loaded, 3) Format: result = 'formatted string'. NEVER assume 'items' exists - always extract first! Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
     parameters=[
         {
             "name": "python_code",
             "type": "string",
-            "description": "Python code to execute. Has access to 'data' variable and load_data_reference() function. FOR FORMATTING: Build readable STRING, e.g. result = '\\n'.join([f\"{item['name']} - {item['distance']}m on {item['start_date'][:10]}\" for item in items]). FOR COUNTING: result = len([x for x in items if...]). IMPORTANT: If '_ref_id' in data, MUST load first: loaded = load_data_reference(data['key']['_ref_id']); items = loaded['items']. If no _ref_id: items = data['key']['items']. Must assign to 'result' variable.",
+            "description": "Python code to execute. Has access to 'data' dict and load_data_reference() function. CRITICAL: NEVER use undefined variables! ALWAYS extract data first. CORRECT PATTERN: loaded = load_data_reference(data['neuron_0_2']['_ref_id']); my_list = loaded.get('items') or loaded.get('data') or loaded; result = '\\n'.join([f\"{x['name']}\" for x in my_list]). WRONG: using 'items' without defining it first! Variable names: 'loaded', 'my_list', 'activities', 'entries' - NOT 'items' (confusing). Must assign final output to 'result' variable.",
             "required": True
         }
     ],

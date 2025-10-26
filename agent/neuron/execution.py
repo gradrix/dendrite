@@ -176,8 +176,65 @@ def execute_neuron(
             logger.warning(f"{indent}│  │  ⚠️  Execution error: {error_msg}")
             logger.debug(f"{indent}│  │  Traceback: {traceback.format_exc()}")
             
-            # ERROR REFLECTION: Ask LLM what went wrong
-            if "404" in error_msg or "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
+            # ERROR REFLECTION: Missing required parameter
+            if "missing" in error_msg.lower() and "required" in error_msg.lower() and "argument" in error_msg.lower():
+                logger.info(f"{indent}│  │  🔍 Reflecting on missing parameter...")
+                
+                # Extract the missing parameter name from error
+                # Error format: "get_activity_kudos() missing 1 required positional argument: 'activity_id'"
+                import re
+                param_match = re.search(r"argument: '(\w+)'", error_msg)
+                missing_param = param_match.group(1) if param_match else "unknown"
+                
+                logger.info(f"{indent}│  │  ❓ Missing parameter: {missing_param}")
+                
+                # Quick focused prompt: Where should this parameter come from?
+                reflection = reflect_on_missing_param(
+                    neuron_desc=neuron.description,
+                    tool_name=tool.name,
+                    missing_param=missing_param,
+                    current_params=params,
+                    context=context,
+                    ollama=ollama
+                )
+                
+                if reflection.get('suggested_value'):
+                    logger.info(f"{indent}│  │  💡 Found value: {reflection['suggested_value']}")
+                    # Add the missing parameter
+                    params[missing_param] = reflection['suggested_value']
+                    
+                    # Store as previous error for next retry
+                    previous_error = {
+                        'error': error_msg,
+                        'hint': f"Parameter '{missing_param}' was missing. Now using: {reflection['suggested_value']}",
+                        'failed_params': params
+                    }
+                    
+                    # Try again with the fixed params
+                    try:
+                        logger.info(f"{indent}│  │  🔄 Retry with fixed params: {json.dumps(params)[:150]}")
+                        result = tool.execute(**params) if tool.name != 'executeDataAnalysis' else tool.execute(**params, **context)
+                        logger.info(f"{indent}│  ├─ Result: {summarize_result_fn(result)}")
+                        # Success! Continue with validation
+                    except Exception as retry_error:
+                        logger.warning(f"{indent}│  │  ❌ Retry failed: {retry_error}")
+                        if attempt == max_retries:
+                            raise
+                        continue
+                else:
+                    # Couldn't find the parameter, let normal retry handle it
+                    logger.warning(f"{indent}│  │  ⚠️  Couldn't determine value for '{missing_param}'")
+                    previous_error = {
+                        'error': error_msg,
+                        'hint': f"Parameter '{missing_param}' is required but was not provided",
+                        'failed_params': params
+                    }
+                    if attempt == max_retries:
+                        raise
+                    continue
+            
+            # ERROR REFLECTION: Ask LLM what went wrong for 404s
+            elif "404" in error_msg or "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
                 logger.info(f"{indent}│  │  🔍 Reflecting on error - likely hallucinated parameter")
                 
                 reflection = reflect_on_error(
@@ -921,6 +978,101 @@ Response:"""
             else:
                 logger.warning(f"   │  │  ⚠️  Could not extract corrected code")
                 return python_code  # Return original if we can't parse correction
+
+
+
+
+def reflect_on_missing_param(
+    neuron_desc: str,
+    tool_name: str,
+    missing_param: str,
+    current_params: Dict,
+    context: Dict,
+    ollama: Any
+) -> Dict:
+    """
+    Quick focused prompt to find value for missing required parameter.
+    
+    Args:
+        neuron_desc: The neuron description
+        tool_name: The tool that needs the parameter
+        missing_param: Name of the missing parameter
+        current_params: Parameters that were provided
+        context: Execution context
+        ollama: Ollama client
+        
+    Returns:
+        Dictionary with suggested_value if found
+    """
+    # Look for obvious matches in context first
+    for key, value in context.items():
+        if key.startswith('dendrite_item_') and isinstance(value, dict):
+            # Check if this item has the parameter we need
+            if missing_param in value:
+                logger.info(f"   Found {missing_param} in {key}: {value[missing_param]}")
+                return {'suggested_value': value[missing_param]}
+            # Check common ID field mappings
+            if missing_param.endswith('_id') and 'id' in value:
+                logger.info(f"   Found 'id' in {key}, mapping to {missing_param}: {value['id']}")
+                return {'suggested_value': value['id']}
+    
+    # Build focused prompt
+    context_hints = []
+    for key, value in context.items():
+        if isinstance(value, dict):
+            if key.startswith('dendrite_item_'):
+                # This is the current item we're processing
+                fields = list(value.keys())[:10]
+                context_hints.append(f"Current item ({key}): {fields}")
+                context_hints.append(f"  Sample values: {json.dumps({k: value[k] for k in fields[:5] if k in value}, default=str)[:200]}")
+    
+    hints_str = '\n'.join(context_hints) if context_hints else "No item context available"
+    
+    prompt = f"""Find the value for a missing parameter.
+
+Goal: {neuron_desc}
+Tool: {tool_name}
+Missing Parameter: {missing_param}
+Current Parameters: {json.dumps(current_params)}
+
+Available Context:
+{hints_str}
+
+QUESTION: What value should be used for '{missing_param}'?
+
+RULES:
+1. Look at "Current item" - it usually has the ID or value needed
+2. If missing_param is 'activity_id' and item has 'id', use that
+3. If missing_param ends with '_id', look for 'id' field in current item
+4. Output ONLY the value (number, string, etc.) - no explanation
+
+If you can find the value, output just the value.
+If you cannot find it, output: NOT_FOUND
+
+Response:"""
+    
+    response = ollama.generate(
+        prompt,
+        system="You extract parameter values from context. Output only the value or NOT_FOUND.",
+        temperature=0.0
+    )
+    
+    response_str = str(response).strip()
+    
+    if response_str == "NOT_FOUND" or not response_str:
+        return {}
+    
+    # Try to parse as number if it looks like one
+    try:
+        if response_str.isdigit():
+            return {'suggested_value': int(response_str)}
+        elif response_str.replace('.', '').isdigit():
+            return {'suggested_value': float(response_str)}
+    except:
+        pass
+    
+    # Return as string
+    return {'suggested_value': response_str}
 
 
 def reflect_on_error(
