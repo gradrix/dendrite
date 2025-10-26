@@ -135,19 +135,72 @@ class AIAgent:
         logger.info("Initialization complete!")
         return True
     
-    def execute_goal(self, goal: str, json_output: bool = False):
+    def execute_goal(self, goal: str, json_output: bool = False, use_v2: bool = False):
         """
         Execute a single goal.
         
         Args:
             goal: Natural language goal
             json_output: If True, output full JSON structure; if False (default), clean text answer
+            use_v2: If True, use V2 architecture (planning + sequential execution)
         """
-        from agent.neuron_agent import NeuronAgent
-        
-        logger.info("============================================================")
-        logger.info("🧠 Neuron Agent (Self-Organizing Architecture)")
-        logger.info("============================================================")
+        if use_v2:
+            from agent.v2 import V2Agent
+            
+            logger.info("============================================================")
+            logger.info("🧠 V2 Agent (Planning + Sequential Execution)")
+            logger.info("============================================================")
+            
+            # Create V2 agent
+            agent = V2Agent(
+                ollama_client=self.ollama,
+                tool_registry=self.registry
+            )
+            
+            start_time = time.time()
+            
+            try:
+                # Execute goal with V2 architecture
+                result = agent.execute_goal(goal)
+                
+                duration = time.time() - start_time
+                
+                # Display output
+                logger.info("")
+                logger.info("============================================================")
+                logger.info("📊 V2 Execution Summary")
+                logger.info("============================================================")
+                logger.info(f"Goal: {goal}")
+                logger.info(f"Completed Steps: {result['completed_steps']}/{result['total_steps']}")
+                logger.info(f"Status: {'✅ Success' if result['success'] else '❌ Failed'}")
+                logger.info(f"Duration: {duration:.2f}s")
+                logger.info("")
+                
+                if json_output:
+                    logger.info("Output (JSON):")
+                    logger.info(json.dumps(result, indent=2))
+                else:
+                    logger.info("Answer:")
+                    if result['success']:
+                        # Show final results
+                        for step_id, data in result.get('results', {}).items():
+                            logger.info(f"  {step_id}: {type(data).__name__}")
+                    else:
+                        logger.info("Execution failed")
+                        for step_id, error in result.get('errors', {}).items():
+                            logger.info(f"  {step_id}: {error}")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"V2 execution failed: {e}")
+                return {"success": False, "error": str(e)}
+        else:
+            from agent.neuron_agent import NeuronAgent
+            
+            logger.info("============================================================")
+            logger.info("🧠 Neuron Agent (Self-Organizing Architecture)")
+            logger.info("============================================================")
         logger.info(f"Goal: {goal}")
         logger.info("")
         
@@ -385,6 +438,11 @@ def main():
         help='Run all instructions once'
     )
     parser.add_argument(
+        '--v2',
+        action='store_true',
+        help='Use V2 architecture (planning + sequential execution)'
+    )
+    parser.add_argument(
         '--json',
         action='store_true',
         help='Output full JSON structure (default: clean text answer)'
@@ -403,7 +461,7 @@ def main():
     # Run based on mode
     if args.goal:
         # Direct goal execution
-        agent.execute_goal(args.goal, json_output=args.json)
+        agent.execute_goal(args.goal, json_output=args.json, use_v2=args.v2)
     elif args.instruction:
         # Load goal from instruction file
         instruction_path = Path("instructions") / f"{args.instruction}.yaml"
@@ -420,7 +478,7 @@ def main():
             sys.exit(1)
         
         logger.info(f"Loaded instruction: {data.get('name', args.instruction)}")
-        agent.execute_goal(goal, json_output=args.json)
+        agent.execute_goal(goal, json_output=args.json, use_v2=args.v2)
     elif args.once:
         # Run all instructions once
         instructions_dir = Path("instructions")
@@ -436,7 +494,7 @@ def main():
                 logger.info(f"\n{'='*60}")
                 logger.info(f"Executing: {filepath.stem}")
                 logger.info(f"{'='*60}")
-                agent.execute_goal(goal)
+                agent.execute_goal(goal, use_v2=args.v2)
     else:
         # Start scheduler
         logger.info("Scheduler mode not yet implemented for micro-prompting")
