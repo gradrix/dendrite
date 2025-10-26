@@ -117,7 +117,7 @@ def aggregate_results(
                 return {
                     'success': True,
                     'count': int(count),
-                    'answer': f"{int(count)} activities"
+                    'answer': f"{int(count)} items"
                 }
     
     # Build summary of what each neuron did

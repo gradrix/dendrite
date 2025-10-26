@@ -45,7 +45,7 @@ def micro_decompose(goal: str, depth: int, config: Dict, ollama, tools=None) -> 
         tool_catalog = "\n\nAVAILABLE TOOLS:\n"
         # Group tools by category
         time_tools = [t for t in tools if any(x in t.name.lower() for x in ['date', 'time', 'timestamp'])]
-        data_tools = [t for t in tools if any(x in t.name.lower() for x in ['activities', 'kudos', 'feed', 'strava'])]
+        data_tools = [t for t in tools if any(x in t.name.lower() for x in ['get', 'fetch', 'retrieve', 'list', 'find'])]
         analysis_tools = [t for t in tools if any(x in t.name.lower() for x in ['execute', 'analysis', 'state'])]
         
         if time_tools:
@@ -75,8 +75,8 @@ CORE PRINCIPLES:
 2. Think about the DATA FLOW: what data does each step need from previous steps?
 3. For "for each X do Y" patterns → fetch X first, then iterate (dendrites will spawn automatically)
 4. For counting/filtering large lists → use executeDataAnalysis with Python (100% accurate)
-   - BE EXPLICIT about filter conditions: e.g., "count activities where sport_type='Run'"
-   - Don't just say "count running activities" - specify the exact field and value
+   - BE EXPLICIT about filter conditions: e.g., "count items where field='value'"
+   - Don't just say "count certain items" - specify the exact field and value
 5. For date/time → check AVAILABLE TOOLS above, pick the right one for the time period
 6. NO DUPLICATES - each step must be unique
 
@@ -163,8 +163,8 @@ def get_strategy_advice(goal: str, config: Dict, ollama) -> str:
             advice_parts.append("⚠️ CRITICAL: Use executeDataAnalysis tool with Python code for counting/filtering.")
             advice_parts.append("   Reason: AI models (even 32B+) can miscount. Python is 100% reliable.")
             if mentions_type:
-                advice_parts.append("   ⚠️ Be EXPLICIT about filter field: e.g., \"count where sport_type=='Run'\" or \"count where type=='Run'\"")
-            advice_parts.append("   Example: executeDataAnalysis(python_code='result = len([x for x in activities if x.get(\"sport_type\", \"\") == \"Run\"])')")
+                advice_parts.append("   ⚠️ Be EXPLICIT about filter field: e.g., \"count where field_name=='value'\"")
+            advice_parts.append("   Example: executeDataAnalysis(python_code='result = len([x for x in items if x.get(\"field_name\", \"\") == \"value\"])')")
         
         if mentions_large_data:
             advice_parts.append("⚠️ Large dataset detected: Counting 50+ items by AI is unreliable. MUST use Python.")

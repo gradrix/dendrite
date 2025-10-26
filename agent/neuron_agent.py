@@ -19,14 +19,14 @@ Flow:
 3. Aggregate final result
 
 Example:
-Goal: "Get activities from last 24h with kudos details"
-→ Neuron 1: getDashboardFeed(hours_ago=24) → [7 activities]
-  → Detect list: "Need to get kudos for each"
+Goal: "Get items from last 24h with details for each"
+→ Neuron 1: getDashboardFeed(hours_ago=24) → [7 items]
+  → Detect list: "Need to get details for each"
   → Spawn 7 dendrites:
-    - Dendrite 1: getActivityKudos(id=123) → [3 kudos]
-    - Dendrite 2: getActivityKudos(id=456) → [5 kudos]
+    - Dendrite 1: getItemDetails(id=123) → [3 details]
+    - Dendrite 2: getItemDetails(id=456) → [5 details]
     - ... (parallel execution)
-  → Aggregate: Merge all kudos into activities list
+  → Aggregate: Merge all details into items list
 → Format final output
 """
 
@@ -378,10 +378,10 @@ If none relevant, output:
                 # Check direct field match
                 if param_name in item_data:
                     params[param_name] = item_data[param_name]
-                # Check common aliases
-                elif param_name == 'activity_id':
-                    # Try: id, activity_id, or any numeric ID field
-                    for key in ['activity_id', 'id']:
+                # Check generic ID field mapping
+                elif param_name.endswith('_id'):
+                    # Try: exact match first, then 'id' as fallback
+                    for key in [param_name, 'id']:
                         if key in item_data and isinstance(item_data[key], (int, str)):
                             try:
                                 params[param_name] = int(item_data[key]) if isinstance(item_data[key], str) else item_data[key]
@@ -393,19 +393,23 @@ If none relevant, output:
         if not params and hasattr(self, 'context'):
             for context_value in self.context.values():
                 if isinstance(context_value, dict):
-                    # Look for lists of activities
-                    activities = self._extract_list_items(context_value)
-                    if activities and len(activities) > 0:
-                        # Use the first activity's ID
-                        first_item = activities[0]
+                    # Look for lists of items
+                    items = self._extract_list_items(context_value)
+                    if items and len(items) > 0:
+                        # Use the first item's ID
+                        first_item = items[0]
                         for param_def in param_defs:
                             param_name = param_def['name']
-                            if param_name == 'activity_id' and 'activity_id' in first_item:
-                                try:
-                                    params[param_name] = int(first_item['activity_id'])
-                                    break
-                                except:
-                                    pass
+                            # Check for any *_id field
+                            if param_name.endswith('_id'):
+                                # Try exact match first, then 'id' as fallback
+                                for key in [param_name, 'id']:
+                                    if key in first_item:
+                                        try:
+                                            params[param_name] = int(first_item[key])
+                                            break
+                                        except:
+                                            pass
                     if params:
                         break
         
@@ -415,10 +419,10 @@ If none relevant, output:
             if param_name in params:
                 continue  # Already found
             
-            # Look for patterns like "activity 12345" or "activity_id: 12345"
+            # Look for patterns like "item 12345" or "item_id: 12345"
             patterns = [
                 rf"{param_name}[:\s]+(\d+)",
-                rf"(?:activity|athlete|user|item)\s+(\d{{8,}})",  # Long IDs
+                rf"(?:item|record|user|entity)\s+(\d{{8,}})",  # Long IDs
                 rf"id[:\s]+(\d{{8,}})"
             ]
             

@@ -90,8 +90,9 @@ def validate_goal_completion(goal: str, result: Any, summarize_validation_fn: ca
     # Look in top level OR in detailed_results
     def contains_raw_data(obj):
         if isinstance(obj, dict):
-            # Check top level
-            if any(key in obj for key in ['activities', 'entries']):
+            # Check top level - look for common list/collection field names
+            list_fields = ['items', 'entries', 'data', 'results', 'list', 'records']
+            if any(key in obj for key in list_fields):
                 return True
             # Check nested detailed_results
             if 'detailed_results' in obj:
@@ -140,7 +141,7 @@ Requirements for "FULLY completed":
 1. All data requested in the goal is present ✓
 2. Data is in the format requested
 3. No partial results or missing fields
-4. If goal asked for "show", "display", "report", or "summary", the output MUST be human-readable text (not raw JSON/dict with API fields like 'activities', 'success', 'count')
+4. If goal asked for "show", "display", "report", or "summary", the output MUST be human-readable text (not raw JSON/dict with API fields like 'items', 'success', 'count')
 
 CRITICAL FORMAT CHECK:
 - Goal requires formatting? {'YES - Must be human-readable text' if needs_formatting else 'NO - Any format OK'}
@@ -239,14 +240,14 @@ CRITICAL RULES:
 4. Do NOT use "extract", "get", "retrieve", "fetch" - data is already here!
 
 Examples (GOOD):
-- "Format the existing activities data into a readable summary with name, type, and kudos count"
+- "Format the existing data into a readable summary with relevant fields"
 - "Display the current results in a human-readable report"
-- "Transform the available activity list into a summary report showing name, type, and kudos"
+- "Transform the available data list into a summary report"
 
 Examples (BAD - will trigger re-fetching):
-- "Extract name, type, kudos from each activity" ❌
-- "Get activity details for each item" ❌
-- "Retrieve kudos count for activities" ❌
+- "Extract fields from each item" ❌
+- "Get details for each item" ❌
+- "Retrieve additional data for items" ❌
 
 Corrective step (use ONLY formatting/display verbs):"""
     

@@ -307,29 +307,25 @@ def micro_find_tool(neuron_desc: str, context: Dict, tools: Any, ollama: Any) ->
         tool_desc_lower = tool.description.lower()
         
         # Strong intent signals (worth 10 points each)
+        # Generic patterns that work across integrations
         intent_signals = {
-            'fetch.*activities': ['getmyactivities', 'getdashboardfeed'],
-            'get.*my.*activities': ['getmyactivities'],
-            'get.*strava.*activities': ['getmyactivities'],
-            'retrieve.*activities': ['getmyactivities', 'getdashboardfeed'],
-            'convert.*timestamp': ['datetounixtimestamp', 'getdaterangetimestamps'],
-            'start.*end.*timestamp': ['getdaterangetimestamps'],
-            'date.*range': ['getdaterangetimestamps'],
-            'give.*kudos': ['givekudos', 'givekudostoparticipants'],
-            'validate.*timestamp': ['validatetimestamp'],
-            'current.*date': ['getcurrentdatetime'],
+            'convert.*timestamp': ['timestamp', 'unix', 'convert'],
+            'start.*end.*timestamp': ['range', 'timestamps', 'date'],
+            'date.*range': ['range', 'timestamps', 'date'],
+            'validate.*timestamp': ['validate', 'timestamp'],
+            'current.*date': ['current', 'date', 'time', 'now'],
             # Python execution for counting/filtering
-            'count.*activities': ['executedataanalysis'],
-            'count.*where': ['executedataanalysis'],
-            'filter.*where': ['executedataanalysis'],
-            'executedataanalysis.*count': ['executedataanalysis'],
-            'python.*count': ['executedataanalysis'],
+            'count.*where': ['executedataanalysis', 'analysis'],
+            'filter.*where': ['executedataanalysis', 'analysis'],
+            'executedataanalysis.*count': ['executedataanalysis', 'analysis'],
+            'python.*count': ['executedataanalysis', 'python'],
             'use.*executedataanalysis': ['executedataanalysis'],
         }
         
-        for pattern, matching_tools in intent_signals.items():
+        for pattern, matching_keywords in intent_signals.items():
             if re.search(pattern, desc_lower):
-                if tool_name_lower in matching_tools:
+                # Check if tool matches any of the keywords
+                if any(kw in tool_name_lower or kw in tool_desc_lower for kw in matching_keywords):
                     score += 10
         
         # Extract keywords for general matching (worth 1 point each)
@@ -338,20 +334,16 @@ def micro_find_tool(neuron_desc: str, context: Dict, tools: Any, ollama: Any) ->
         score += sum(1 for kw in keywords if kw in tool_text)
         
         # Boost for exact key phrase matches in description (worth 5 points)
+        # Generic patterns only
         key_phrases = {
-            'my activities': 'getmyactivities',
-            'my own': 'getmyactivities',
-            'strava activities': 'getmyactivities',
-            'friends activities': 'getdashboardfeed',
-            'dashboard feed': 'getdashboardfeed',
-            'executedataanalysis': 'executedataanalysis',
-            'python code': 'executedataanalysis',
-            'count activities': 'executedataanalysis',
+            'executedataanalysis': ['executedataanalysis', 'analysis'],
+            'python code': ['executedataanalysis', 'python'],
         }
         
-        for phrase, matching_tool in key_phrases.items():
-            if phrase in desc_lower and tool_name_lower == matching_tool:
-                score += 5
+        for phrase, matching_keywords in key_phrases.items():
+            if phrase in desc_lower:
+                if any(kw in tool_name_lower or kw in tool_desc_lower for kw in matching_keywords):
+                    score += 5
         
         if score > 0:
             relevant_tools.append((score, tool))
@@ -460,9 +452,10 @@ def clarify_vague_terms(neuron_desc: str, tool: Any, context: Dict, ollama: Any)
         r'\bkudos data\b': 'kudos data',
         r'\bextract.*data\b': 'extract data',
         r'\bprocess.*items\b': 'process items',
-        r'\bhandle.*activities\b': 'handle activities',
         r'\bget.*information\b': 'get information',
         r'\bfetch.*details\b': 'fetch details',
+        r'\bprocess.*items\b': 'process items',
+        r'\bhandle.*data\b': 'handle data',
     }
     
     desc_lower = neuron_desc.lower()
@@ -512,15 +505,16 @@ Think about:
 3. What format should the result have?
 
 CRITICAL: Use the EXACT field names that exist in the data!
-- For Strava activities, use: 'id' (NOT 'activity_id'), 'start_date' (NOT 'timestamp'), 'name', 'sport_type', 'kudos_count'
+- Check the sample data above to see what fields are available
 - Don't invent field names that don't exist in the data
+- Common fields might include: 'id', 'name', 'date', 'type', 'count', etc.
 
 Examples:
-- Vague: "extract kudos data" 
-  → Clear: "extract these fields from activities: id, start_date, name, sport_type, kudos_count"
+- Vague: "extract data" 
+  → Clear: "extract these fields from items: id, name, date, type, count"
 
-- Vague: "process activities"
-  → Clear: "for each activity, extract the 'name' and 'start_date' fields"
+- Vague: "process items"
+  → Clear: "for each item, extract the 'name' and 'date' fields"
 
 Output ONLY the clarified task description (rewrite the sub-task with EXACT field names):"""
     
@@ -535,6 +529,7 @@ Output ONLY the clarified task description (rewrite the sub-task with EXACT fiel
     
     # Only use clarification if it's actually more specific (longer and mentions fields)
     if len(clarified) > len(neuron_desc) and any(word in clarified.lower() for word in ['field', 'attribute', 'name', 'type', 'count', 'id', 'timestamp']):
+
         return clarified
     else:
         return neuron_desc
@@ -679,22 +674,22 @@ CRITICAL RULES FOR PARAMETER EXTRACTION:
 6. For date/time filtering (after_unix, before_unix): 
    - Use these ONLY if the tool accepts them AND the task requires date filtering
    - If task says "format" or "display" without mentioning dates, DON'T add date filters
-7. If task mentions extracting data from previous steps, look for it in context (e.g., "activities", "activity_id")
+7. If task mentions extracting data from previous steps, look for it in context
 8. Extract numeric values as integers, not strings
 8. Do NOT use fake/example values like 12345 or 1234567890
 9. Check the parameter list - if a parameter is not listed, do NOT include it
 
 EXAMPLES:
-- Task: "Fetch activities from January 2024", auto-mapped: {{"after_unix": 1704067200, "before_unix": 1706745599}}
+- Task: "Fetch items from January 2024", auto-mapped: {{"after_unix": 1704067200, "before_unix": 1706745599}}
   → Output: {{"after_unix": 1704067200, "before_unix": 1706745599, "per_page": 200}}
 
-- Task: "Format the activities", Tool params: [name, description], auto-mapped: {{"after_unix": 1704067200}}
+- Task: "Format the items", Tool params: [name, description], auto-mapped: {{"after_unix": 1704067200}}
   → Output: {{}} (don't include after_unix - tool doesn't accept it!)
 
 - Task: "Merge extracted data", Tool needs: entries, Context shows: neuron_0_2: Result = [{{...}}, {{...}}]
   → Output: {{"entries": [extracted data from neuron_0_2]}}
 
-- Task: "Get first 3 activities", context shows activities list
+- Task: "Get first 3 items", context shows items list
   → Output: {{}} or {{"per_page": 3}} (depending on tool params)
 
 Output JSON only (no explanation):""".format(
@@ -837,11 +832,12 @@ VALIDATION CHECKS:
 2. Does it answer the EXACT question asked?
 3. Does it access fields that actually exist in the data?
 4. Is it unnecessarily complex? (Simple is better)
-5. Does it handle the disk reference correctly? (load_data_reference returns {{'activities': [...], 'count': N}})
+5. Does it handle the disk reference correctly? (load_data_reference returns dict with data array and count)
 
 CRITICAL: For counting tasks, the code should be SIMPLE:
 - Load data: loaded = load_data_reference(ref_id)
-- Count: result = len([x for x in loaded['activities'] if condition])
+- Get items: items = loaded.get('items') or loaded.get('data') or loaded.get('results')
+- Count: result = len([x for x in items if condition])
 - DON'T try to extract extra fields like 'date', 'description' unless specifically asked
 
 COMMON ERRORS TO FIX:
