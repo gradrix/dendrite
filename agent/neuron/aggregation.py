@@ -224,8 +224,10 @@ def summarize_result(result: Any) -> str:
                 # Check for count or other indicators
                 elif 'count' in result:
                     return f"Success: {result['count']} items"
-                elif 'activity_id' in result:
-                    return f"Success: operation completed for activity {result['activity_id']}"
+                # Check for any ID field indicating operation completion
+                elif any(key.endswith('_id') for key in result.keys()):
+                    id_key = next(key for key in result.keys() if key.endswith('_id'))
+                    return f"Success: operation completed for {id_key}={result[id_key]}"
                 # For timestamp/date conversions, show the actual values
                 elif 'unix_timestamp' in result or 'human_readable' in result:
                     parts = []

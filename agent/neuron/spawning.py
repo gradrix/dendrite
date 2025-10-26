@@ -28,8 +28,8 @@ def find_context_list_for_iteration(neuron_desc: str, context: Dict) -> Optional
     Returns:
         List of items if iteration detected, None otherwise
     """
-    # Check for "for each" / "each activity" / "all items" keywords
-    iteration_keywords = ['for each', 'each activity', 'each item', 'all activities', 'every activity']
+    # Check for "for each" / "each X" / "all items" iteration patterns
+    iteration_keywords = ['for each', 'each item', 'all items', 'every item', 'for all']
     if not any(kw in neuron_desc.lower() for kw in iteration_keywords):
         return None
     
@@ -57,7 +57,7 @@ def spawn_dendrites_from_context(
     """
     Spawn dendrites based on context list (pre-execution spawning).
     
-    This is used when a neuron like "Get kudos for each activity" needs to iterate
+    This is used when a neuron like "Get details for each item" needs to iterate
     over a list from a previous neuron.
     
     Args:
@@ -398,7 +398,7 @@ def extract_list_items(result: Any) -> List[Dict]:
                 with open(data_file, 'r') as f:
                     loaded = json.load(f)
                 # Try to extract list from loaded data
-                for field in ['activities', 'entries', 'kudos', 'items', 'data']:
+                for field in ['items', 'entries', 'data', 'results', 'list']:
                     if field in loaded and isinstance(loaded[field], list):
                         logger.info(f"   Loaded {len(loaded[field])} items from disk reference")
                         return loaded[field]
@@ -420,8 +420,8 @@ def extract_list_items(result: Any) -> List[Dict]:
             logger.warning(f"   Using placeholder items (count={count}) - disk load failed")
             return [{'_index': i, '_ref_id': result['_ref_id']} for i in range(count)]
     
-    # Try common list fields
-    for field in ['entries', 'activities', 'kudos', 'items', 'data']:
+    # Try common list fields (order matters - more specific first)
+    for field in ['items', 'entries', 'data', 'results', 'list']:
         if field in result and isinstance(result[field], list):
             return result[field]
     
@@ -433,24 +433,27 @@ def format_item_goal(template: str, item: Dict, index: int) -> str:
     try:
         return template.format(**item)
     except KeyError:
-        # Fallback: Map common ID fields and try substitution
-        # If template has {activity_id} but item has 'id', map it
+        # Fallback: Map common ID fields flexibly
+        # E.g., if template has {record_id} but item has 'id', map it
         result_template = template
-        id_mappings = [
-            ('activity_id', ['id', 'activity_id']),
-            ('athlete_id', ['id', 'athlete_id']),
-            ('item_id', ['id', 'item_id'])
-        ]
         
-        for template_field, item_fields in id_mappings:
-            if '{' + template_field + '}' in result_template:
-                for item_field in item_fields:
-                    if item_field in item:
-                        result_template = result_template.replace(
-                            '{' + template_field + '}',
-                            str(item[item_field])
-                        )
-                        break
+        # Extract placeholder names from template
+        import re
+        placeholders = re.findall(r'\{(\w+)\}', template)
+        
+        for placeholder in placeholders:
+            # Try to find matching field in item
+            if placeholder in item:
+                result_template = result_template.replace(
+                    '{' + placeholder + '}',
+                    str(item[placeholder])
+                )
+            # Try common fallbacks: if placeholder ends with '_id', try just 'id'
+            elif placeholder.endswith('_id') and 'id' in item:
+                result_template = result_template.replace(
+                    '{' + placeholder + '}',
+                    str(item['id'])
+                )
         
         # If still has placeholders, replace with index
         if '{' in result_template:
@@ -471,7 +474,7 @@ Original task: {neuron_desc}
 Sample item: {json.dumps(sample_item, indent=2)[:200]}
 
 Output a goal template (use {{field_name}} for placeholders):
-Example: "Get kudos for activity {{activity_id}}"
+Example: "Get details for record {{id}}"
 
 Goal template:"""
     
@@ -488,16 +491,47 @@ Goal template:"""
 def micro_extract_item_goal_from_desc(neuron_desc: str, ollama=None) -> str:
     """Extract goal template from description without result data."""
     
-    # For now, use a simple extraction without LLM call
-    # This is a fallback that can be enhanced with LLM if ollama is provided
+    # Use LLM if available to extract a better template
+    if ollama:
+        prompt = f"""Extract a goal template for processing each item in a list.
+
+Original task description: {neuron_desc}
+
+Output a short, actionable goal template using {{id}} for the item identifier.
+Example inputs:
+- "Get kudos for each activity" → "Get kudos for item {{id}}"
+- "Update each record" → "Update item {{id}}"
+- "Process all entries" → "Process item {{id}}"
+
+Goal template:"""
+        
+        try:
+            response = ollama.generate(
+                prompt,
+                system="Extract goal template for list iteration.",
+                temperature=0.2
+            )
+            response_str = str(response) if not isinstance(response, str) else response
+            template = response_str.strip().split('\n')[0]
+            if template and '{' in template:
+                return template
+        except Exception:
+            pass  # Fall through to pattern matching
     
-    # Simple pattern matching
-    if 'kudos' in neuron_desc.lower():
-        return "Get kudos for activity {activity_id}"
-    elif 'update' in neuron_desc.lower():
-        return "Update activity {activity_id}"
-    elif 'participants' in neuron_desc.lower():
-        return "Get participants for activity {activity_id}"
+    # Pattern matching fallback
+    import re
     
-    # Generic fallback
-    return f"{neuron_desc} (item {{index}})"
+    # Try to extract "X for each Y" or "each Y, X"
+    match = re.search(r'(get|fetch|retrieve|update|process|delete)\s+(\w+)\s+for\s+each', neuron_desc, re.IGNORECASE)
+    if match:
+        action = match.group(1).capitalize()
+        subject = match.group(2)
+        return f"{action} {subject} for item {{id}}"
+    
+    match = re.search(r'for\s+each\s+\w+,?\s+(get|fetch|retrieve|update|process)', neuron_desc, re.IGNORECASE)
+    if match:
+        action = match.group(1).capitalize()
+        return f"{action} data for item {{id}}"
+    
+    # Last resort: just use the description as-is
+    return f"Process item {{id}}: {neuron_desc}"
