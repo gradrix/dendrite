@@ -95,8 +95,8 @@ def aggregate_results(
     
     logger.info(f"📋 Found {len(formatting_results)} formatting results total")
     
-    # If we have dendrite results but no formatting, auto-format them
-    if dendrite_result_neuron and not formatting_results:
+    # PRIORITY 1: If we have dendrite results, ALWAYS prefer them (actual collected data)
+    if dendrite_result_neuron:
         logger.info(f"🌳 Auto-formatting dendrite results from neuron {dendrite_result_neuron[0]}")
         formatted_text = format_dendrite_results(dendrite_result_neuron[1], goal)
         if formatted_text:
@@ -105,8 +105,10 @@ def aggregate_results(
                 'summary': formatted_text,
                 'detailed_results': results
             }
+        else:
+            logger.warning(f"⚠️ Failed to format dendrite results, falling back to other formatting")
     
-    # If we have formatting results, pick the best one
+    # PRIORITY 2: If no dendrite results (or formatting failed), use other formatting results
     if formatting_results:
         best_result = None
         
