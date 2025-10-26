@@ -40,7 +40,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from agent.ollama_client import OllamaClient
 from agent.tool_registry import ToolRegistry
 from agent.data_compaction import compact_data
-from agent.neuron import aggregation
+from agent.neuron import aggregation, spawning
 
 logger = logging.getLogger(__name__)
 
@@ -308,16 +308,18 @@ If none relevant, output:
             logger.info(f"{indent}│  │  Context keys: {list(self.context.keys())}")
             
             # Type 1: Iteration spawning ("for each activity")
-            context_list = self._find_context_list_for_iteration(neuron.description)
+            context_list = spawning.find_context_list_for_iteration(neuron.description, self.context)
             if context_list:
                 logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning (iterate over context)")
-                return self._spawn_dendrites_from_context(neuron, context_list, parent_goal)
+                return spawning.spawn_dendrites_from_context(
+                    neuron, context_list, parent_goal, self.context, self.execute_goal, self.ollama
+                )
             
             # Type 2: Multi-step spawning ("start AND end", "both X and Y")
-            subtasks = self._detect_multi_step_task(neuron.description)
+            subtasks = spawning.detect_multi_step_task(neuron.description, self.context, self.tools, self.ollama)
             if subtasks and len(subtasks) > 1:
                 logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning ({len(subtasks)} sub-tasks)")
-                return self._spawn_dendrites_for_subtasks(neuron, subtasks, parent_goal)
+                return spawning.spawn_dendrites_for_subtasks(neuron, subtasks, parent_goal, self.execute_goal)
             
             logger.info(f"{indent}│  │  No spawning needed")
         
@@ -443,7 +445,10 @@ If none relevant, output:
                 
                 if spawn_needed:
                     logger.info(f"{indent}│  ├─ 🌿 Spawning dendrites")
-                    result = self._spawn_dendrites(neuron, result, parent_goal)
+                    result = spawning.spawn_dendrites(
+                        neuron, result, parent_goal, self.context, 
+                        self.execute_goal, self._micro_aggregate_dendrites, self.ollama
+                    )
             
             # Step 5: Validate
             is_valid = self._micro_validate(parent_goal, neuron.description, result)
@@ -462,296 +467,29 @@ If none relevant, output:
         return result
     
     def _find_context_list_for_iteration(self, neuron_desc: str) -> Optional[List[Dict]]:
-        """
-        Check if this neuron needs to iterate over a list from context.
-        
-        Returns the list if found, None otherwise.
-        """
-        # Check for "for each" / "each activity" / "all items" keywords
-        iteration_keywords = ['for each', 'each activity', 'each item', 'all activities', 'every activity']
-        if not any(kw in neuron_desc.lower() for kw in iteration_keywords):
-            return None
-        
-        # Look for lists in context (from previous neurons)
-        for key, value in self.context.items():
-            if not isinstance(value, dict):
-                continue
-            
-            # Check if this looks like a list result
-            items = self._extract_list_items(value)
-            if items and len(items) > 1:
-                return items
-        
-        return None
+        """Check if this neuron needs to iterate over a list from context."""
+        return spawning.find_context_list_for_iteration(neuron_desc, self.context)
     
     def _spawn_dendrites_from_context(self, parent_neuron: Neuron, items: List[Dict], parent_goal: str) -> Any:
-        """
-        Spawn dendrites based on context list (pre-execution spawning).
-        
-        This is used when a neuron like "Get kudos for each activity" needs to iterate
-        over a list from a previous neuron.
-        """
-        indent = '  ' * parent_neuron.depth
-        logger.info(f"{indent}│  ├─ Found {len(items)} items in context")
-        
-        # Extract what to do with each item from neuron description
-        item_goal_template = self._micro_extract_item_goal_from_desc(parent_neuron.description)
-        logger.info(f"{indent}│  ├─ Item goal: {item_goal_template}")
-        
-        # Spawn dendrite for each item
-        dendrite_results = []
-        for i, item in enumerate(items, 1):
-            logger.info(f"{indent}│  ├─ Dendrite {i}/{len(items)}")
-            
-            # Format goal for this specific item
-            item_goal = self._format_item_goal(item_goal_template, item, i)
-            
-            # Create dendrite neuron
-            dendrite = Neuron(
-                description=item_goal,
-                index=i,
-                depth=parent_neuron.depth + 1
-            )
-            
-            # IMPORTANT: Store item data in context so it can be used for parameter extraction
-            item_context_key = f'dendrite_item_{parent_neuron.depth + 1}_{i}'
-            self.context[item_context_key] = item
-            
-            # Execute recursively
-            dendrite_result = self.execute_goal(item_goal, depth=parent_neuron.depth + 1)
-            
-            # Clean up item context after execution
-            self.context.pop(item_context_key, None)
-            
-            dendrite.result = dendrite_result
-            parent_neuron.spawned_dendrites.append(dendrite)
-            dendrite_results.append(dendrite_result)
-        
-        logger.info(f"{indent}│  ╰─ All dendrites complete, aggregating")
-        
-        # Create aggregated result
-        aggregated = {
-            'success': True,
-            'items_processed': len(items),
-            'dendrite_results': dendrite_results,
-            'items': items
-        }
-        
-        return aggregated
+        """Spawn dendrites based on context list (pre-execution spawning)."""
+        return spawning.spawn_dendrites_from_context(
+            parent_neuron, items, parent_goal, self.context, self.execute_goal, self.ollama
+        )
     
     def _spawn_dendrites(self, parent_neuron: Neuron, result: Any, parent_goal: str) -> Any:
-        """
-        Spawn dendrites (sub-neurons) for each item in a list result.
-        
-        Args:
-            parent_neuron: The neuron that produced the list
-            result: The result containing a list
-            parent_goal: Original goal for context
-            
-        Returns:
-            Enhanced result with dendrite outputs aggregated
-        """
-        indent = '  ' * parent_neuron.depth
-        
-        # Extract items from result
-        items = self._extract_list_items(result)
-        if not items:
-            logger.info(f"{indent}│  │  No items to spawn for")
-            return result
-        
-        logger.info(f"{indent}│  ├─ Found {len(items)} items")
-        
-        # Micro-prompt: What should we do with each item?
-        item_goal_template = self._micro_extract_item_goal(parent_neuron.description, result)
-        logger.info(f"{indent}│  ├─ Item goal: {item_goal_template}")
-        
-        # Spawn dendrite for each item (sequential execution)
-        dendrite_results = []
-        for i, item in enumerate(items, 1):
-            logger.info(f"{indent}│  ├─ Dendrite {i}/{len(items)}")
-            
-            # Format goal for this specific item
-            item_goal = self._format_item_goal(item_goal_template, item, i)
-            
-            # Create dendrite neuron
-            dendrite = Neuron(
-                description=item_goal,
-                index=i,
-                depth=parent_neuron.depth + 1
-            )
-            
-            # IMPORTANT: Store item data in context so it can be used for parameter extraction
-            item_context_key = f'dendrite_item_{parent_neuron.depth + 1}_{i}'
-            self.context[item_context_key] = item
-            
-            # Execute recursively (this is the key!)
-            dendrite_result = self.execute_goal(item_goal, depth=parent_neuron.depth + 1)
-            
-            # Clean up item context after execution
-            self.context.pop(item_context_key, None)
-            
-            dendrite.result = dendrite_result
-            parent_neuron.spawned_dendrites.append(dendrite)
-            dendrite_results.append(dendrite_result)
-        
-        logger.info(f"{indent}│  ╰─ All dendrites complete, aggregating")
-        
-        # Aggregate dendrite results back into parent result
-        aggregated = self._micro_aggregate_dendrites(result, items, dendrite_results)
-        return aggregated
+        """Spawn dendrites (sub-neurons) for each item in a list result."""
+        return spawning.spawn_dendrites(
+            parent_neuron, result, parent_goal, self.context,
+            self.execute_goal, self._micro_aggregate_dendrites, self.ollama
+        )
     
     def _detect_multi_step_task(self, neuron_desc: str) -> Optional[List[str]]:
-        """
-        Detect if this neuron requires multiple sub-tasks (e.g., "get start AND end timestamps").
-        
-        Returns list of sub-task descriptions if detected, None otherwise.
-        """
-        import re
-        
-        # Keywords that suggest multiple parallel tasks
-        multi_keywords = [
-            'start and end',
-            'both',
-            'and also',
-            'as well as',
-            'along with'
-        ]
-        
-        # Check if description mentions needing multiple things
-        desc_lower = neuron_desc.lower()
-        if not any(kw in desc_lower for kw in multi_keywords):
-            return None
-        
-        # CRITICAL: First check if there's a tool that can do this in one call
-        # Extract keywords for tool search
-        keywords = re.findall(r'\b\w{4,}\b', neuron_desc.lower())
-        
-        # Search for tools that match
-        relevant_tools = []
-        for tool in self.tools.list_tools():
-            tool_text = f"{tool.name} {tool.description}".lower()
-            score = sum(1 for kw in keywords if kw in tool_text)
-            if score > 2:  # Good match
-                relevant_tools.append((score, tool))
-        
-        if relevant_tools:
-            # Sort by score and check top tool
-            relevant_tools.sort(reverse=True, key=lambda x: x[0])
-            top_tool = relevant_tools[0][1]
-            
-            # If tool description mentions "start and end" or "both", it can handle this
-            if any(kw in top_tool.description.lower() for kw in ['start and end', 'both', 'range']):
-                logger.debug(f"   │  │  ✓ Found tool {top_tool.name} that handles multi-step task")
-                return None  # Don't spawn - let tool handle it
-        
-        # No suitable tool found, need to decompose
-        # Use LLM to decompose into ATOMIC sub-tasks
-        # CRITICAL: Show what data is already available to avoid "fetch" tasks
-        context_summary = ""
-        if self.context:
-            available_keys = [k for k in self.context.keys() if not k.startswith('_')]
-            if available_keys:
-                context_summary = f"\n\nData already in context (DON'T create 'fetch' tasks for these):\n"
-                for key in available_keys[:5]:  # Show first 5
-                    value = self.context[key]
-                    if isinstance(value, dict):
-                        if '_ref_id' in value:
-                            context_summary += f"  - {key}: Large data (already loaded)\n"
-                        elif 'unix_timestamp' in value:
-                            context_summary += f"  - {key}: Timestamp = {value.get('unix_timestamp')}\n"
-                        elif 'result' in value:
-                            context_summary += f"  - {key}: Result already computed\n"
-                        else:
-                            context_summary += f"  - {key}: Data available\n"
-        
-        prompt = f"""Break this into ATOMIC sub-tasks that each call ONE tool.
-
-Task: {neuron_desc}
-{context_summary}
-IMPORTANT Rules:
-1. Each sub-task must be ONE specific tool call (e.g., "Call dateToUnixTimestamp for January 1").
-2. Do NOT create "fetch" or "get result" tasks for data that's already in context!
-3. Do NOT create tasks like "Parse January" or "Extract value" - those aren't tool calls.
-4. If data is already available in context, the sub-task should USE it, not fetch it.
-
-If this can be done with a SINGLE tool call, output "SINGLE_TASK".
-
-Output (numbered list of specific tool calls, or SINGLE_TASK):"""
-        
-        response = self.ollama.generate(
-            prompt,
-            system="Decompose into atomic tool calls. Each sub-task = ONE tool execution.",
-            temperature=0.1
-        )
-        
-        response_str = str(response) if not isinstance(response, str) else response
-        
-        if 'SINGLE_TASK' in response_str.upper():
-            return None
-        
-        # Extract numbered items
-        import re
-        subtasks = []
-        for match in re.finditer(r'^\d+\.\s*(.+)$', response_str, re.MULTILINE):
-            subtasks.append(match.group(1).strip())
-        
-        # Only return if we have 2-3 subtasks (not 5+)
-        if 2 <= len(subtasks) <= 3:
-            return subtasks
-        else:
-            logger.debug(f"   │  │  ⚠️  Too many subtasks ({len(subtasks)}), treating as single task")
-            return None
+        """Detect if this neuron requires multiple sub-tasks."""
+        return spawning.detect_multi_step_task(neuron_desc, self.context, self.tools, self.ollama)
     
     def _spawn_dendrites_for_subtasks(self, parent_neuron: Neuron, subtasks: List[str], parent_goal: str) -> Any:
-        """
-        Spawn dendrites for multiple sub-tasks that need to be completed.
-        
-        Example: "Get start and end timestamps" spawns 2 dendrites:
-        - Dendrite 1: "Get start timestamp"
-        - Dendrite 2: "Get end timestamp"
-        """
-        indent = '  ' * parent_neuron.depth
-        logger.info(f"{indent}│  ├─ Sub-tasks:")
-        for i, task in enumerate(subtasks, 1):
-            logger.info(f"{indent}│  │  {i}. {task}")
-        
-        # Execute each sub-task
-        dendrite_results = []
-        for i, task_desc in enumerate(subtasks, 1):
-            logger.info(f"{indent}│  ├─ Sub-task {i}/{len(subtasks)}")
-            
-            # Create dendrite neuron
-            dendrite = Neuron(
-                description=task_desc,
-                index=i,
-                depth=parent_neuron.depth + 1
-            )
-            
-            # Execute recursively
-            dendrite_result = self.execute_goal(task_desc, depth=parent_neuron.depth + 1)
-            
-            dendrite.result = dendrite_result
-            parent_neuron.spawned_dendrites.append(dendrite)
-            dendrite_results.append(dendrite_result)
-        
-        logger.info(f"{indent}│  ╰─ All sub-tasks complete, aggregating")
-        
-        # Aggregate results from all sub-tasks
-        aggregated = {
-            'success': True,
-            'subtasks_completed': len(subtasks),
-            'results': dendrite_results
-        }
-        
-        # Merge specific fields if available (e.g., timestamps)
-        for result in dendrite_results:
-            if isinstance(result, dict):
-                # Merge timestamp fields
-                for key in ['after_unix', 'before_unix', 'unix_timestamp', 'start_timestamp', 'end_timestamp']:
-                    if key in result:
-                        aggregated[key] = result[key]
-        
-        return aggregated
+        """Spawn dendrites for multiple sub-tasks that need to be completed."""
+        return spawning.spawn_dendrites_for_subtasks(parent_neuron, subtasks, parent_goal, self.execute_goal)
     
     # ========================================================================
     # Micro-Prompts (each 50-100 tokens)
@@ -1622,51 +1360,11 @@ Answer yes or no only:"""
     
     def _micro_extract_item_goal(self, neuron_desc: str, result: Any) -> str:
         """Micro-prompt: What to do with each item?"""
-        
-        items = self._extract_list_items(result)
-        sample_item = items[0] if items else {}
-        
-        prompt = f"""What should be done for EACH item?
-
-Original task: {neuron_desc}
-Sample item: {json.dumps(sample_item, indent=2)[:200]}
-
-Output a goal template (use {{field_name}} for placeholders):
-Example: "Get kudos for activity {{activity_id}}"
-
-Goal template:"""
-        
-        response = self.ollama.generate(
-            prompt,
-            system="Extract goal template for list items.",
-            temperature=0.2
-        )
-        
-        response_str = str(response) if not isinstance(response, str) else response
-        return response_str.strip().split('\n')[0]
+        return spawning.micro_extract_item_goal(neuron_desc, result, self.ollama)
     
     def _micro_extract_item_goal_from_desc(self, neuron_desc: str) -> str:
         """Extract goal template from description without result data."""
-        
-        prompt = f"""Convert this task into a goal template for EACH item.
-
-Task: {neuron_desc}
-
-Examples:
-- "For each activity, get kudos" → "Get kudos for activity {{activity_id}}"
-- "Get names of people who gave kudos to each activity" → "Get kudos names for activity {{activity_id}}"
-- "Update all activities" → "Update activity {{activity_id}}"
-
-Output template (use {{field_name}} for placeholders):"""
-        
-        response = self.ollama.generate(
-            prompt,
-            system="Extract goal template. Use placeholders like {{activity_id}}.",
-            temperature=0.2
-        )
-        
-        response_str = str(response) if not isinstance(response, str) else response
-        return response_str.strip().split('\n')[0]
+        return spawning.micro_extract_item_goal_from_desc(neuron_desc, self.ollama)
     
     def _micro_validate(self, parent_goal: str, neuron_desc: str, result: Any) -> bool:
         """Micro-prompt: Is this result valid?"""
@@ -1904,26 +1602,11 @@ Your answer:"""
     
     def _extract_list_items(self, result: Any) -> List[Dict]:
         """Extract list of items from result."""
-        if not isinstance(result, dict):
-            return []
-        
-        # Try common list fields
-        for field in ['entries', 'activities', 'kudos', 'items', 'data']:
-            if field in result and isinstance(result[field], list):
-                return result[field]
-        
-        return []
+        return spawning.extract_list_items(result)
     
     def _format_item_goal(self, template: str, item: Dict, index: int) -> str:
         """Format goal template with item data."""
-        try:
-            return template.format(**item)
-        except KeyError:
-            # Fallback: use first available ID field
-            for id_field in ['id', 'activity_id', 'athlete_id', 'item_id']:
-                if id_field in item:
-                    return template.replace('{' + id_field + '}', str(item[id_field]))
-            return f"{template} (item {index})"
+        return spawning.format_item_goal(template, item, index)
     
     def _summarize_result(self, result: Any) -> str:
         """Summarize result for logging."""
