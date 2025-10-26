@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 @tool(
     name="executeDataAnalysis",
-    description="Execute Python code for 100% accurate counting, filtering, and FORMATTING. CRITICAL: Use this for ANY counting task - AI models miscount, Python doesn't. For FORMATTING tasks: ALWAYS follow 3 steps: 1) Load data: loaded = load_data_reference(data['neuron_X_Y']['_ref_id']), 2) Extract list: my_list = loaded.get('items') or loaded.get('data') or loaded, 3) Format: result = 'formatted string'. NEVER assume 'items' exists - always extract first! Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
+    description="Execute Python code for 100% accurate counting, filtering, and FORMATTING. CRITICAL: Use this for ANY counting task - AI models miscount, Python doesn't. For FORMATTING tasks: ALWAYS follow 3 steps: 1) Load data: loaded = load_data_reference(REF_ID), 2) Extract list: my_list = loaded.get('items') or loaded.get('data') or loaded, 3) Format: result = 'formatted string'. NEVER assume 'items' exists - always extract first! Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
     parameters=[
         {
             "name": "python_code",
             "type": "string",
-            "description": "Python code to execute. Has access to 'data' dict and load_data_reference() function. CRITICAL: NEVER use undefined variables! ALWAYS extract data first. CORRECT PATTERN: loaded = load_data_reference(data['neuron_0_2']['_ref_id']); my_list = loaded.get('items') or loaded.get('data') or loaded; result = '\\n'.join([f\"{x['name']}\" for x in my_list]). WRONG: using 'items' without defining it first! Variable names: 'loaded', 'my_list', 'activities', 'entries' - NOT 'items' (confusing). Must assign final output to 'result' variable.",
+            "description": "Python code to execute. Has access to 'data' dict and load_data_reference() function. CRITICAL: NEVER use undefined variables! ALWAYS extract data first. STEP-BY-STEP PATTERN: (1) Get ref_id from data dict - LOOK at available keys in data to find the right one, e.g., ref_id = data['neuron_0_2']['_ref_id']; (2) Load: loaded = load_data_reference(ref_id); (3) Extract list: my_list = loaded.get('items') or loaded.get('data') or loaded; (4) Format: result = '\\n'.join([f\"{x['name']}: {x['distance']}m\" for x in my_list[:3]]). DO NOT use placeholder keys like 'neuron_0_X' - use ACTUAL keys from context. DO NOT call format() function - construct the result string yourself. Must assign final output to 'result' variable.",
             "required": True
         }
     ],
