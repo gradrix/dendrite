@@ -7,14 +7,23 @@ Handles spawning sub-neurons (dendrites) for:
 3. Post-execution spawning when a result needs further processing
 
 All functions are designed to be stateless and accept dependencies as parameters.
+
+Safety limits:
+- MAX_DENDRITES_PER_SPAWN: Maximum dendrites to spawn in one go (default: 50)
+- MAX_OUTPUT_SIZE_MB: Maximum output size before aborting (default: 5MB)
 """
 
 import logging
 import re
 import json
+import sys
 from typing import Any, Dict, List, Optional, Callable
 
 logger = logging.getLogger(__name__)
+
+# Safety limits to prevent infinite loops and excessive resource usage
+MAX_DENDRITES_PER_SPAWN = 50  # Max number of dendrites to spawn
+MAX_OUTPUT_SIZE_MB = 5  # Max output file size in megabytes
 
 
 def find_context_list_for_iteration(neuron_desc: str, context: Dict) -> Optional[List[Dict]]:
@@ -150,9 +159,19 @@ def spawn_dendrites_from_context(
     indent = '  ' * parent_neuron.depth
     logger.info(f"{indent}│  ├─ Found {len(items)} items in context")
     
+    # SAFETY CHECK 1: Limit number of dendrites
+    if len(items) > MAX_DENDRITES_PER_SPAWN:
+        logger.warning(f"{indent}│  ⚠️  Too many items ({len(items)}) - limiting to {MAX_DENDRITES_PER_SPAWN} to prevent infinite loop")
+        items = items[:MAX_DENDRITES_PER_SPAWN]
+    
     # Extract what to do with each item from neuron description
     item_goal_template = micro_extract_item_goal_from_desc(parent_neuron.description, ollama)
     logger.info(f"{indent}│  ├─ Item goal: {item_goal_template}")
+    
+    # SAFETY CHECK 2: Track output size and parameters to detect loops
+    total_output_size = 0
+    seen_param_sets = []  # Track parameter combinations to detect duplicates
+    duplicate_count = 0
     
     # Spawn dendrite for each item
     dendrite_results = []
@@ -168,6 +187,17 @@ def spawn_dendrites_from_context(
         item_goal = format_item_goal(item_goal_template, item, i)
         logger.info(f"{indent}│  │  Formatted goal: {item_goal}")
         
+        # SAFETY CHECK 3: Detect if we're calling with same parameters repeatedly
+        # Create a signature of this item to detect duplicates
+        item_signature = str(sorted(item.items())[:5])  # First 5 key-value pairs
+        if item_signature in seen_param_sets:
+            duplicate_count += 1
+            if duplicate_count >= 3:
+                logger.error(f"{indent}│  ❌ LOOP DETECTED: Same parameters used {duplicate_count} times - aborting to prevent infinite loop!")
+                logger.error(f"{indent}│     Duplicate item signature: {item_signature}")
+                break
+        seen_param_sets.append(item_signature)
+        
         # IMPORTANT: Store item data in context so it can be used for parameter extraction
         item_context_key = f'dendrite_item_{parent_neuron.depth + 1}_{i}'
         context[item_context_key] = item
@@ -177,6 +207,22 @@ def spawn_dendrites_from_context(
         
         # Clean up item context after execution
         context.pop(item_context_key, None)
+        
+        # SAFETY CHECK 4: Monitor output size
+        result_size = len(json.dumps(dendrite_result, default=str))
+        total_output_size += result_size
+        total_size_mb = total_output_size / (1024 * 1024)
+        
+        if total_size_mb > MAX_OUTPUT_SIZE_MB:
+            logger.error(f"{indent}│  ❌ OUTPUT SIZE LIMIT EXCEEDED: {total_size_mb:.2f}MB > {MAX_OUTPUT_SIZE_MB}MB - aborting!")
+            logger.error(f"{indent}│     Processed {i}/{len(items)} dendrites before limit")
+            # Return partial results
+            dendrite_results.append({
+                'error': 'Output size limit exceeded',
+                'items_processed': i,
+                'total_size_mb': total_size_mb
+            })
+            break
         
         # Store result in parent's dendrites list if it has one
         if hasattr(parent_neuron, 'spawned_dendrites'):
@@ -192,6 +238,7 @@ def spawn_dendrites_from_context(
         dendrite_results.append(dendrite_result)
     
     logger.info(f"{indent}│  ╰─ All dendrites complete, aggregating")
+    logger.info(f"{indent}│     Total output size: {total_output_size / 1024:.2f}KB")
     
     # Create aggregated result
     aggregated = {
@@ -238,9 +285,19 @@ def spawn_dendrites(
     
     logger.info(f"{indent}│  ├─ Found {len(items)} items")
     
+    # SAFETY CHECK 1: Limit number of dendrites
+    if len(items) > MAX_DENDRITES_PER_SPAWN:
+        logger.warning(f"{indent}│  ⚠️  Too many items ({len(items)}) - limiting to {MAX_DENDRITES_PER_SPAWN} to prevent infinite loop")
+        items = items[:MAX_DENDRITES_PER_SPAWN]
+    
     # Micro-prompt: What should we do with each item?
     item_goal_template = micro_extract_item_goal(parent_neuron.description, result, ollama)
     logger.info(f"{indent}│  ├─ Item goal: {item_goal_template}")
+    
+    # SAFETY CHECK 2: Track output size and parameters to detect loops
+    total_output_size = 0
+    seen_param_sets = []  # Track parameter combinations to detect duplicates
+    duplicate_count = 0
     
     # Spawn dendrite for each item (sequential execution)
     dendrite_results = []
@@ -249,6 +306,17 @@ def spawn_dendrites(
         
         # Format goal for this specific item
         item_goal = format_item_goal(item_goal_template, item, i)
+        
+        # SAFETY CHECK 3: Detect if we're calling with same parameters repeatedly
+        # Create a signature of this item to detect duplicates
+        item_signature = str(sorted(item.items())[:5]) if isinstance(item, dict) else str(item)
+        if item_signature in seen_param_sets:
+            duplicate_count += 1
+            if duplicate_count >= 3:
+                logger.error(f"{indent}│  ❌ LOOP DETECTED: Same parameters used {duplicate_count} times - aborting to prevent infinite loop!")
+                logger.error(f"{indent}│     Duplicate item signature: {item_signature}")
+                break
+        seen_param_sets.append(item_signature)
         
         # IMPORTANT: Store item data in context so it can be used for parameter extraction
         item_context_key = f'dendrite_item_{parent_neuron.depth + 1}_{i}'
@@ -259,6 +327,22 @@ def spawn_dendrites(
         
         # Clean up item context after execution
         context.pop(item_context_key, None)
+        
+        # SAFETY CHECK 4: Monitor output size
+        result_size = len(json.dumps(dendrite_result, default=str))
+        total_output_size += result_size
+        total_size_mb = total_output_size / (1024 * 1024)
+        
+        if total_size_mb > MAX_OUTPUT_SIZE_MB:
+            logger.error(f"{indent}│  ❌ OUTPUT SIZE LIMIT EXCEEDED: {total_size_mb:.2f}MB > {MAX_OUTPUT_SIZE_MB}MB - aborting!")
+            logger.error(f"{indent}│     Processed {i}/{len(items)} dendrites before limit")
+            # Return partial results
+            dendrite_results.append({
+                'error': 'Output size limit exceeded',
+                'items_processed': i,
+                'total_size_mb': total_size_mb
+            })
+            break
         
         # Store result in parent's dendrites list if it has one
         if hasattr(parent_neuron, 'spawned_dendrites'):
@@ -274,6 +358,7 @@ def spawn_dendrites(
         dendrite_results.append(dendrite_result)
     
     logger.info(f"{indent}│  ╰─ All dendrites complete, aggregating")
+    logger.info(f"{indent}│     Total output size: {total_output_size / 1024:.2f}KB")
     
     # Aggregate dendrite results back into parent result via callback
     aggregated = aggregate_dendrites_fn(result, items, dendrite_results)

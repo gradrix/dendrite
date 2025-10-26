@@ -653,10 +653,54 @@ def micro_determine_params(
     
     # Find dendrite item data in context (most relevant for current execution)
     dendrite_item = None
+    dendrite_item_key = None
     for key, value in context.items():
         if key.startswith('dendrite_item_') and isinstance(value, dict):
             dendrite_item = value
+            dendrite_item_key = key
+            logger.info(f"   │  │  🎯 Found dendrite item in context: {key}")
             break
+    
+    # CRITICAL: Extract ID/key from goal string for dendrite spawning scenarios
+    # When processing "Extract details for activity 16243029035", we need to use that ID
+    goal_extracted_id = None
+    goal_extracted_key = None
+    
+    # Pattern 1: "activity 12345" or "activity_id 12345"
+    activity_id_match = re.search(r'activity[_ ]?(?:id[_ ]?)?(\d+)', neuron_desc, re.IGNORECASE)
+    if activity_id_match:
+        goal_extracted_id = activity_id_match.group(1)
+        goal_extracted_key = 'activity_id'
+        logger.info(f"   │  │  🎯 Extracted activity ID from goal: {goal_extracted_id}")
+    
+    # Pattern 2: "record 12345" or "record_id 12345"
+    if not goal_extracted_id:
+        record_id_match = re.search(r'record[_ ]?(?:id[_ ]?)?(\d+)', neuron_desc, re.IGNORECASE)
+        if record_id_match:
+            goal_extracted_id = record_id_match.group(1)
+            goal_extracted_key = 'record_id'
+            logger.info(f"   │  │  🎯 Extracted record ID from goal: {goal_extracted_id}")
+    
+    # Pattern 3: "item 12345" or any ID-like number in goal
+    if not goal_extracted_id:
+        item_id_match = re.search(r'(?:item|id|key)[:\s]+(\d+)', neuron_desc, re.IGNORECASE)
+        if item_id_match:
+            goal_extracted_id = item_id_match.group(1)
+            goal_extracted_key = 'id'
+            logger.info(f"   │  │  🎯 Extracted item ID from goal: {goal_extracted_id}")
+    
+    # If we extracted an ID from goal and it matches dendrite item's ID, USE IT!
+    if goal_extracted_id and dendrite_item and 'id' in dendrite_item:
+        dendrite_item_id = str(dendrite_item['id'])
+        if goal_extracted_id == dendrite_item_id:
+            logger.info(f"   │  │  ✅ Goal ID matches dendrite item ID: {goal_extracted_id}")
+            # Auto-map the ID to common parameter names if tool accepts them
+            for param_name in ['activity_id', 'id', 'key', 'record_id']:
+                if param_name in param_names and param_name not in auto_mapped_params:
+                    auto_mapped_params[param_name] = goal_extracted_id
+                    logger.info(f"   │  │  🔗 Auto-mapped {param_name} = {goal_extracted_id} from goal string")
+        else:
+            logger.warning(f"   │  │  ⚠️  Goal ID ({goal_extracted_id}) doesn't match dendrite item ID ({dendrite_item_id})!")
     
     # Build context info - show what we auto-mapped and what else is available
     context_info = ""
@@ -668,7 +712,11 @@ def micro_determine_params(
         # Filter out non-serializable objects (like Neuron instances)
         try:
             serializable_item = {k: v for k, v in dendrite_item.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))}
-            context_info += f"\n\nCurrent item data:\n{json.dumps(serializable_item, indent=2)[:500]}"
+            context_info += f"\n\n🎯 CURRENT ITEM DATA (use this for parameters!):\n{json.dumps(serializable_item, indent=2)[:500]}"
+            
+            # Highlight the ID field specifically
+            if 'id' in serializable_item:
+                context_info += f"\n\n⚠️  CRITICAL: This item's ID is {serializable_item['id']} - USE THIS ID for any ID/key parameters!"
         except Exception as e:
             context_info += f"\n\nCurrent item data: (serialization error: {e})"
     elif context:
@@ -823,29 +871,37 @@ Parameters needed:
 {context_info}
 
 CRITICAL RULES FOR PARAMETER EXTRACTION:
-0. **CRITICAL**: ONLY use context keys listed in "CONTEXT KEYS AVAILABLE" above! 
+0. **PARSE TASK DESCRIPTION FIRST**: If task contains explicit IDs/keys (e.g., "activity 16243029035"), USE THOSE VALUES!
+   - Example: "Extract details for activity 16243029035" → {{"activity_id": "16243029035"}} or {{"key": "16243029035"}}
+   - Example: "Get record 12345" → {{"record_id": "12345"}} or {{"id": "12345"}}
+   - ⚠️  CRITICAL: Don't use a different ID from context - use what's in the task description!
+1. **CRITICAL**: ONLY use context keys listed in "CONTEXT KEYS AVAILABLE" above! 
    - If you try to use a key that doesn't exist (e.g., data['neuron_0_2'] when only neuron_1_1 exists), you will get KeyError!
    - Check the list carefully and ONLY use keys that are actually shown!
-1. If parameters are already auto-mapped (shown above), include them in your output
-2. For remaining REQUIRED parameters - extract from task description or context data
-3. ONLY use parameters that this tool actually accepts (check parameter list above)
-4. IMPORTANT: Check "CONTEXT KEYS AVAILABLE" - previous neurons have produced data you can use!
+2. If parameters are already auto-mapped (shown above), include them in your output
+3. For remaining REQUIRED parameters - extract from task description or context data
+4. ONLY use parameters that this tool actually accepts (check parameter list above)
+5. IMPORTANT: Check "CONTEXT KEYS AVAILABLE" - previous neurons have produced data you can use!
    - 📦 (LARGE DATA): Has '_ref_id' → use load_data_reference(data['key']['_ref_id'])
    - 📊 (SCALAR RESULT): NO '_ref_id' → access fields directly like data['key']['unix_timestamp']
    - ✅ (RESULT): Has 'result' field → access as data['key']['result']
-5. For mergeTimeseriesState specifically:
+   - 🎯 (CURRENT ITEM DATA): If shown, this is THE item you're processing - use its ID!
+6. For mergeTimeseriesState specifically:
    - Copy 'entries' data with original field names unchanged
    - Set 'timestamp_field' to match the actual field name in the data (e.g., 'start_date' not 'timestamp')
    - Set 'id_field' to match the actual ID field in the data (e.g., 'id')
-6. For date/time filtering (after_unix, before_unix): 
+7. For date/time filtering (after_unix, before_unix): 
    - Use these ONLY if the tool accepts them AND the task requires date filtering
    - If task says "format" or "display" without mentioning dates, DON'T add date filters
-7. If task mentions extracting data from previous steps, look for it in context
-8. Extract numeric values as integers, not strings
-8. Do NOT use fake/example values like 12345 or 1234567890
-9. Check the parameter list - if a parameter is not listed, do NOT include it
+8. If task mentions extracting data from previous steps, look for it in context
+9. Extract numeric values as integers, not strings
+10. Do NOT use fake/example values like 12345 or 1234567890
+11. Check the parameter list - if a parameter is not listed, do NOT include it
 
 EXAMPLES:
+- Task: "Extract details for activity 16243029035", Tool accepts: [activity_id, key]
+  → Output: {{"activity_id": "16243029035"}} (ID extracted from task description!)
+
 - Task: "Fetch items from January 2024", auto-mapped: {{"after_unix": 1704067200, "before_unix": 1706745599}}
   → Output: {{"after_unix": 1704067200, "before_unix": 1706745599, "per_page": 200}}
 
