@@ -837,7 +837,7 @@ def get_dashboard_feed(hours_ago: Optional[int] = None, num_entries: int = 20) -
             "success": True,
             "count": len(summaries),
             "hours_filter": hours_ago,
-            "activities": summaries
+            "items": summaries  # Generic field name for agent compatibility
         }
         
     except Exception as e:
@@ -1072,12 +1072,12 @@ def get_my_activities(
         return {
             "success": True,
             "count": len(activities),
-            "activities": activities,
+            "items": activities,  # Generic field name for agent compatibility
             "page": page
         }
     except Exception as e:
         logger.error(f"Failed to get activities: {e}")
-        return {"success": False, "error": str(e), "activities": []}
+        return {"success": False, "error": str(e), "items": []}
 
 
 @tool(

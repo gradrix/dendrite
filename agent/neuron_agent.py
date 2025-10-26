@@ -589,14 +589,14 @@ Answer yes or no only:"""
                 logger.info(f"   │  │  📦 {key}: {type(value).__name__} = {str(value)[:100]}")
                 
                 if isinstance(value, dict):
-                    # For activities list, OPTIMIZE for small models
-                    if 'activities' in value:
-                        activities = value['activities']
+                    # For list data, OPTIMIZE for small models
+                    if 'items' in value:
+                        items = value['items']
                         
                         # Check if already in compact format (from context storage)
                         is_compact = value.get('format') == 'compact'
                         
-                        if isinstance(activities, list) and len(activities) > 0:
+                        if isinstance(items, list) and len(items) > 0:
                             # Check if this is a counting/filtering task
                             is_counting = any(word in neuron_desc.lower() for word in ['count', 'how many', 'number of'])
                             is_filtering = any(word in neuron_desc.lower() for word in ['filter', 'type', 'where', 'matching'])
@@ -604,49 +604,49 @@ Answer yes or no only:"""
                             if is_counting or is_filtering:
                                 # Use pre-compacted data if available, otherwise compact now
                                 if is_compact:
-                                    compact_activities = activities  # Already compact!
-                                    logger.info(f"📋 Using pre-stored compact format: {len(activities)} activities")
+                                    compact_items = items  # Already compact!
+                                    logger.info(f"📋 Using pre-stored compact format: {len(items)} items")
                                 else:
                                     # Legacy path: compact on-the-fly (shouldn't happen with new storage)
-                                    compact_activities = []
-                                    for act in activities:
+                                    compact_items = []
+                                    for item in items:
                                         compact = {
-                                            'name': act.get('name', 'Unknown'),
-                                            'type': act.get('type', 'Unknown'),
-                                            'sport_type': act.get('sport_type', act.get('type', 'Unknown')),
-                                            'id': act.get('id'),
-                                            'distance': act.get('distance'),
-                                            'date': act.get('start_date_local', act.get('start_date', ''))[:10]  # Just date part
+                                            'name': item.get('name', 'Unknown'),
+                                            'type': item.get('type', 'Unknown'),
+                                            'sport_type': item.get('sport_type', item.get('type', 'Unknown')),
+                                            'id': item.get('id'),
+                                            'distance': item.get('distance'),
+                                            'date': item.get('start_date_local', item.get('start_date', ''))[:10]  # Just date part
                                         }
-                                        compact_activities.append(compact)
+                                        compact_items.append(compact)
                                 
-                                compact_data = compact_activities
-                                context_summary += f"\n  {key}: {len(activities)} activities (compact format)"
+                                compact_data = compact_items
+                                context_summary += f"\n  {key}: {len(items)} items (compact format)"
                                 context_summary += f"\n    Format: name, type, sport_type, id, distance, date"
-                                context_summary += f"\n    Activities:\n"
-                                # Show ALL activities in compact format for small models
-                                for i, act in enumerate(compact_activities[:100]):  # Limit to 100 for safety
-                                    context_summary += f"      {i+1}. {act['name']} | type={act['sport_type']} | date={act['date']}\n"
-                                if len(compact_activities) > 100:
-                                    context_summary += f"      ... and {len(compact_activities) - 100} more\n"
+                                context_summary += f"\n    Items:\n"
+                                # Show ALL items in compact format for small models
+                                for i, item in enumerate(compact_items[:100]):  # Limit to 100 for safety
+                                    context_summary += f"      {i+1}. {item['name']} | type={item['sport_type']} | date={item['date']}\n"
+                                if len(compact_items) > 100:
+                                    context_summary += f"      ... and {len(compact_items) - 100} more\n"
                                 
                                 # Log what we're showing
-                                logger.info(f"   │  │  📋 Compact format: showing {min(len(compact_activities), 100)} activities to AI")
-                                run_count = sum(1 for a in compact_activities if 'Run' in a.get('sport_type', ''))
-                                logger.info(f"   │  │  🏃 Activities with 'Run' in sport_type: {run_count}")
+                                logger.info(f"   │  │  📋 Compact format: showing {min(len(compact_items), 100)} items to AI")
+                                run_count = sum(1 for a in compact_items if 'Run' in a.get('sport_type', ''))
+                                logger.info(f"   │  │  🏃 Items with 'Run' in sport_type: {run_count}")
                                 
-                                # SANITY CHECK: Write activities to temp file for debugging
+                                # SANITY CHECK: Write items to temp file for debugging
                                 try:
-                                    with open('/tmp/ai_activities_debug.json', 'w') as f:
-                                        json.dump({'count': len(compact_activities), 'run_count': run_count, 'activities': compact_activities[:10]}, f, indent=2)
+                                    with open('/tmp/ai_items_debug.json', 'w') as f:
+                                        json.dump({'count': len(compact_items), 'run_count': run_count, 'items': compact_items[:10]}, f, indent=2)
                                 except:
                                     pass
                             else:
                                 # For non-counting tasks, show structure only
-                                context_summary += f"\n  {key}: List of {len(activities)} activities"
-                                first_activity = activities[0]
-                                context_summary += f"\n    Each activity has: {', '.join(first_activity.keys())}"
-                                context_summary += f"\n    Example: {json.dumps(first_activity, indent=4)[:500]}"
+                                context_summary += f"\n  {key}: List of {len(items)} items"
+                                first_item = items[0]
+                                context_summary += f"\n    Each item has: {', '.join(first_item.keys())}"
+                                context_summary += f"\n    Example: {json.dumps(first_item, indent=4)[:500]}"
                     else:
                         # For timestamp/date results, show full data (not truncated)
                         context_summary += f"\n  {key}: {json.dumps(value, indent=2)}"

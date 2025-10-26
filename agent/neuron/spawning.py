@@ -398,7 +398,7 @@ def extract_list_items(result: Any) -> List[Dict]:
                 with open(data_file, 'r') as f:
                     loaded = json.load(f)
                 # Try to extract list from loaded data
-                for field in ['items', 'entries', 'data', 'results', 'list', 'activities', 'records', 'objects']:
+                for field in ['items', 'entries', 'data', 'results', 'list', 'records', 'objects']:
                     if field in loaded and isinstance(loaded[field], list):
                         logger.info(f"   Loaded {len(loaded[field])} items from disk reference")
                         return loaded[field]
@@ -421,7 +421,7 @@ def extract_list_items(result: Any) -> List[Dict]:
             return [{'_index': i, '_ref_id': result['_ref_id']} for i in range(count)]
     
     # Try common list fields (order matters - more specific first)
-    for field in ['items', 'entries', 'data', 'results', 'list', 'activities', 'records', 'objects']:
+    for field in ['items', 'entries', 'data', 'results', 'list', 'records', 'objects']:
         if field in result and isinstance(result[field], list):
             return result[field]
     
