@@ -83,8 +83,12 @@ def spawn_dendrites_from_context(
     for i, item in enumerate(items, 1):
         logger.info(f"{indent}│  ├─ Dendrite {i}/{len(items)}")
         
+        # Debug: log item structure
+        logger.debug(f"Item {i} keys: {list(item.keys())}, has 'id': {'id' in item}")
+        
         # Format goal for this specific item
         item_goal = format_item_goal(item_goal_template, item, i)
+        logger.debug(f"Formatted goal: {item_goal}")
         
         # IMPORTANT: Store item data in context so it can be used for parameter extraction
         item_context_key = f'dendrite_item_{parent_neuron.depth + 1}_{i}'
@@ -429,37 +433,63 @@ def extract_list_items(result: Any) -> List[Dict]:
 
 
 def format_item_goal(template: str, item: Dict, index: int) -> str:
-    """Format goal template with item data."""
+    """
+    Format goal template with item data.
+    
+    Handles flexible ID mapping:
+    - {id} → item['id']
+    - {activity_id} → item['id'] or item['activity_id']
+    - {record_id} → item['id'] or item['record_id']
+    etc.
+    """
+    # First, try direct formatting
     try:
         return template.format(**item)
-    except KeyError:
-        # Fallback: Map common ID fields flexibly
-        # E.g., if template has {record_id} but item has 'id', map it
-        result_template = template
+    except (KeyError, ValueError) as e:
+        pass  # Fall back to manual replacement
+    
+    # Manual replacement with flexible ID mapping
+    result_template = template
+    
+    # Extract placeholders
+    import re
+    placeholders = re.findall(r'\{(\w+)\}', template)
+    
+    for placeholder in placeholders:
+        replaced = False
         
-        # Extract placeholder names from template
-        import re
-        placeholders = re.findall(r'\{(\w+)\}', template)
-        
-        for placeholder in placeholders:
-            # Try to find matching field in item
-            if placeholder in item:
-                result_template = result_template.replace(
-                    '{' + placeholder + '}',
-                    str(item[placeholder])
-                )
-            # Try common fallbacks: if placeholder ends with '_id', try just 'id'
-            elif placeholder.endswith('_id') and 'id' in item:
-                result_template = result_template.replace(
-                    '{' + placeholder + '}',
-                    str(item['id'])
-                )
-        
-        # If still has placeholders, replace with index
-        if '{' in result_template:
-            return f"{result_template} (item {index})"
-        
-        return result_template
+        # Try exact match first
+        if placeholder in item:
+            result_template = result_template.replace(
+                '{' + placeholder + '}',
+                str(item[placeholder])
+            )
+            replaced = True
+        # If placeholder ends with '_id', try to find 'id' field
+        elif placeholder.endswith('_id') and 'id' in item:
+            result_template = result_template.replace(
+                '{' + placeholder + '}',
+                str(item['id'])
+            )
+            replaced = True
+        # If placeholder is 'id', look for any *_id field or 'id'
+        elif placeholder == 'id':
+            if 'id' in item:
+                result_template = result_template.replace('{id}', str(item['id']))
+                replaced = True
+            else:
+                # Look for any field ending in _id
+                for key in item.keys():
+                    if key.endswith('_id'):
+                        result_template = result_template.replace('{id}', str(item[key]))
+                        replaced = True
+                        break
+    
+    # If still has unreplaced placeholders, append context
+    if '{' in result_template:
+        return f"{result_template} (item {index})"
+    
+    return result_template
 
 
 def micro_extract_item_goal(neuron_desc: str, result: Any, ollama) -> str:
