@@ -469,6 +469,12 @@ def extract_list_items(result: Any) -> List[Dict]:
     if not isinstance(result, dict):
         return []
     
+    # Skip if this looks like already-processed dendrite results
+    # Dendrite results have: success, goal, depth, neurons, results
+    if 'dendrite_results' in result:
+        logger.info(f"   Skipping iteration over dendrite_results (already processed)")
+        return []
+    
     # Check if this is a compacted data reference
     if '_ref_id' in result and '_format' in result and result['_format'] == 'disk_reference':
         # Load the actual data from disk to get real items
@@ -505,7 +511,13 @@ def extract_list_items(result: Any) -> List[Dict]:
     # Try common list fields (order matters - more specific first)
     for field in ['items', 'entries', 'data', 'results', 'list', 'records', 'objects']:
         if field in result and isinstance(result[field], list):
-            return result[field]
+            items = result[field]
+            # Skip if items look like dendrite results (have 'goal', 'neurons', 'depth')
+            if items and len(items) > 0 and isinstance(items[0], dict):
+                if 'goal' in items[0] and 'neurons' in items[0] and 'depth' in items[0]:
+                    logger.info(f"   Skipping '{field}' - looks like dendrite results, not raw data")
+                    continue
+            return items
     
     return []
 
