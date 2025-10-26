@@ -20,13 +20,14 @@ logger = logging.getLogger(__name__)
 def find_context_list_for_iteration(neuron_desc: str, context: Dict) -> Optional[List[Dict]]:
     """
     Check if this neuron needs to iterate over a list from context.
+    Intelligently filters items based on conditions in the description.
     
     Args:
         neuron_desc: Neuron description to check for iteration keywords
         context: Context dictionary to search for lists
         
     Returns:
-        List of items if iteration detected, None otherwise
+        List of items if iteration detected (filtered by conditions), None otherwise
     """
     # Check for "for each" / "each X" / "all items" iteration patterns
     iteration_keywords = ['for each', 'each item', 'all items', 'every item', 'for all']
@@ -40,10 +41,85 @@ def find_context_list_for_iteration(neuron_desc: str, context: Dict) -> Optional
         
         # Check if this looks like a list result
         items = extract_list_items(value)
-        if items and len(items) > 1:
-            return items
+        if not items or len(items) <= 1:
+            continue
+        
+        # Apply smart filtering based on description conditions
+        filtered_items = filter_items_by_description(items, neuron_desc)
+        
+        if filtered_items and len(filtered_items) > 0:
+            if len(filtered_items) < len(items):
+                logger.info(f"   🎯 Filtered {len(items)} items → {len(filtered_items)} items matching conditions")
+            return filtered_items
     
     return None
+
+
+def filter_items_by_description(items: List[Dict], description: str) -> List[Dict]:
+    """
+    Filter items based on conditions in the neuron description.
+    
+    Examples:
+    - "for each activity that has kudos" → filter where kudos_count > 0
+    - "for each item with status complete" → filter where status == 'complete'
+    - "for each user that is active" → filter where active == True
+    
+    Args:
+        items: List of items to filter
+        description: Neuron description with filtering conditions
+        
+    Returns:
+        Filtered list of items
+    """
+    desc_lower = description.lower()
+    
+    # Pattern 1: "that has X" or "with X" where X might be a field
+    # Common patterns: "has kudos", "with kudos", "that have kudos"
+    import re
+    
+    # Detect "that has/have/with X" patterns
+    condition_patterns = [
+        r'that (?:has|have) (\w+)',
+        r'with (\w+)',
+        r'having (\w+)',
+    ]
+    
+    for pattern in condition_patterns:
+        match = re.search(pattern, desc_lower)
+        if match:
+            field_name = match.group(1)
+            
+            # Try common field name variations
+            possible_fields = [
+                field_name,
+                f"{field_name}_count",
+                f"has_{field_name}",
+                f"{field_name}s",  # plural
+            ]
+            
+            filtered = []
+            for item in items:
+                # Check if any of the possible fields exist and have a truthy value
+                for possible_field in possible_fields:
+                    if possible_field in item:
+                        value = item[possible_field]
+                        # Check if value is truthy (> 0 for numbers, True for bools, non-empty for strings)
+                        if isinstance(value, (int, float)) and value > 0:
+                            filtered.append(item)
+                            break
+                        elif isinstance(value, bool) and value:
+                            filtered.append(item)
+                            break
+                        elif isinstance(value, str) and value:
+                            filtered.append(item)
+                            break
+            
+            if filtered:
+                logger.info(f"   ✂️  Filtered by condition '{match.group(0)}': {len(items)} → {len(filtered)} items")
+                return filtered
+    
+    # No filter conditions found or no items matched - return all
+    return items
 
 
 def spawn_dendrites_from_context(
