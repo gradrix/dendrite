@@ -172,3 +172,68 @@ def execute_data_analysis(python_code: str, **context) -> Dict[str, Any]:
             'error': str(e),
             'retry': True
         }
+
+
+def inspect_data_structure(data_dict: Dict, max_depth: int = 3) -> str:
+    """
+    Inspect the structure of data to help AI understand what's available.
+    Returns a tree-like string showing keys and types.
+    
+    Args:
+        data_dict: Dictionary to inspect
+        max_depth: Maximum depth to recurse
+        
+    Returns:
+        String representation of data structure
+    """
+    def inspect_value(val, depth=0, key_name="root"):
+        if depth > max_depth:
+            return f"{'  ' * depth}... (max depth)\n"
+        
+        indent = '  ' * depth
+        result = ""
+        
+        if isinstance(val, dict):
+            # Show dict keys
+            if '_ref_id' in val and '_format' in val:
+                # This is a compacted reference - try to load it
+                try:
+                    from pathlib import Path
+                    import json
+                    data_file = val.get('_data_file')
+                    if data_file and Path(data_file).exists():
+                        with open(data_file, 'r') as f:
+                            loaded = json.load(f)
+                        result += f"{indent}{key_name}: <compacted_data> → "
+                        # Show what's inside the compacted data
+                        if isinstance(loaded, list):
+                            result += f"List[{len(loaded)} items]\n"
+                            if len(loaded) > 0:
+                                result += f"{indent}  Sample item keys: {list(loaded[0].keys())[:15]}\n"
+                        elif isinstance(loaded, dict):
+                            result += f"Dict with keys: {list(loaded.keys())[:15]}\n"
+                        return result
+                except Exception:
+                    pass
+            
+            result += f"{indent}{key_name}: Dict with {len(val)} keys\n"
+            for k, v in list(val.items())[:10]:  # Limit to first 10 keys
+                result += inspect_value(v, depth + 1, k)
+            if len(val) > 10:
+                result += f"{indent}  ... and {len(val) - 10} more keys\n"
+                
+        elif isinstance(val, list):
+            result += f"{indent}{key_name}: List[{len(val)} items]\n"
+            if len(val) > 0:
+                result += f"{indent}  Sample item type: {type(val[0]).__name__}\n"
+                if isinstance(val[0], dict):
+                    result += f"{indent}  Sample item keys: {list(val[0].keys())[:15]}\n"
+                    
+        else:
+            val_type = type(val).__name__
+            result += f"{indent}{key_name}: {val_type}\n"
+            
+        return result
+    
+    return inspect_value(data_dict)
+

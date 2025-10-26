@@ -622,6 +622,9 @@ def micro_determine_params(
     Returns:
         Parameter dictionary
     """
+    import json
+    from pathlib import Path
+    
     # STEP 0: CLARIFY vague terms before proceeding
     # Check if neuron description contains vague terms that need clarification
     clarified_desc = clarify_vague_terms(neuron_desc, tool, context, ollama)
@@ -684,6 +687,29 @@ def micro_determine_params(
                     # This is a DATA reference (for executeDataAnalysis)
                     context_info += f"\n  📦 {key}: LARGE DATA - {value.get('summary', 'data reference')}"
                     context_info += f"\n     → For Python: data['{key}']['_ref_id'] then load_data_reference(...)"
+                    
+                    # NEW: Show actual data structure from the compacted file
+                    try:
+                        from tools.analysis_tools import inspect_data_structure
+                        data_file = value.get('_data_file')
+                        if data_file:
+                            if Path(data_file).exists():
+                                with open(data_file, 'r') as f:
+                                    loaded = json.load(f)
+                                
+                                # Show structure
+                                if isinstance(loaded, list) and len(loaded) > 0:
+                                    context_info += f"\n     📋 DATA STRUCTURE: List with {len(loaded)} items"
+                                    if isinstance(loaded[0], dict):
+                                        sample_keys = list(loaded[0].keys())
+                                        context_info += f"\n     📋 Each item has keys: {sample_keys[:20]}"
+                                        context_info += f"\n     ⚠️  USE THESE KEYS! Don't reference 'athlete', 'items' unless listed above!"
+                                elif isinstance(loaded, dict):
+                                    context_info += f"\n     📋 DATA STRUCTURE: Dict with keys: {list(loaded.keys())[:20]}"
+                                    context_info += f"\n     ⚠️  USE THESE KEYS! Don't invent keys that don't exist!"
+                    except Exception as e:
+                        logger.debug(f"Could not inspect data structure: {e}")
+                        
                 elif 'success' in value and 'result' in value:
                     # This is a RESULT from a previous neuron - SHOW THE ACTUAL DATA!
                     result_data = value.get('result')
