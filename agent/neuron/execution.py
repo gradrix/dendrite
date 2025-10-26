@@ -84,7 +84,7 @@ def execute_neuron(
         context_list = find_context_list_fn(neuron.description, context)
         if context_list:
             logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning (iterate over context)")
-            return spawn_from_context_fn(neuron, context_list, parent_goal, context)
+            return spawn_from_context_fn(neuron, context_list, parent_goal)
         
         # Type 2: Multi-step spawning ("start AND end", "both X and Y")
         subtasks = detect_multi_step_fn(neuron.description, context, tools)

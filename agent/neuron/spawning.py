@@ -387,6 +387,39 @@ def extract_list_items(result: Any) -> List[Dict]:
     if not isinstance(result, dict):
         return []
     
+    # Check if this is a compacted data reference
+    if '_ref_id' in result and '_format' in result and result['_format'] == 'disk_reference':
+        # Load the actual data from disk to get real items
+        try:
+            import json
+            from pathlib import Path
+            data_file = result.get('_data_file')
+            if data_file and Path(data_file).exists():
+                with open(data_file, 'r') as f:
+                    loaded = json.load(f)
+                # Try to extract list from loaded data
+                for field in ['activities', 'entries', 'kudos', 'items', 'data']:
+                    if field in loaded and isinstance(loaded[field], list):
+                        logger.info(f"   Loaded {len(loaded[field])} items from disk reference")
+                        return loaded[field]
+                # If the loaded data itself is a list
+                if isinstance(loaded, list):
+                    logger.info(f"   Loaded {len(loaded)} items from disk reference (root list)")
+                    return loaded
+        except Exception as e:
+            logger.warning(f"   Failed to load disk reference: {e}")
+            # Fall back to extracting count from summary
+            pass
+        
+        # Fallback: Extract count from summary if loading failed
+        summary = result.get('summary', '')
+        import re
+        match = re.search(r'List of (\d+)', summary)
+        if match:
+            count = int(match.group(1))
+            logger.warning(f"   Using placeholder items (count={count}) - disk load failed")
+            return [{'_index': i, '_ref_id': result['_ref_id']} for i in range(count)]
+    
     # Try common list fields
     for field in ['entries', 'activities', 'kudos', 'items', 'data']:
         if field in result and isinstance(result[field], list):
@@ -400,11 +433,30 @@ def format_item_goal(template: str, item: Dict, index: int) -> str:
     try:
         return template.format(**item)
     except KeyError:
-        # Fallback: use first available ID field
-        for id_field in ['id', 'activity_id', 'athlete_id', 'item_id']:
-            if id_field in item:
-                return template.replace('{' + id_field + '}', str(item[id_field]))
-        return f"{template} (item {index})"
+        # Fallback: Map common ID fields and try substitution
+        # If template has {activity_id} but item has 'id', map it
+        result_template = template
+        id_mappings = [
+            ('activity_id', ['id', 'activity_id']),
+            ('athlete_id', ['id', 'athlete_id']),
+            ('item_id', ['id', 'item_id'])
+        ]
+        
+        for template_field, item_fields in id_mappings:
+            if '{' + template_field + '}' in result_template:
+                for item_field in item_fields:
+                    if item_field in item:
+                        result_template = result_template.replace(
+                            '{' + template_field + '}',
+                            str(item[item_field])
+                        )
+                        break
+        
+        # If still has placeholders, replace with index
+        if '{' in result_template:
+            return f"{result_template} (item {index})"
+        
+        return result_template
 
 
 def micro_extract_item_goal(neuron_desc: str, result: Any, ollama) -> str:
