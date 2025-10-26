@@ -1,15 +1,15 @@
 """
-Neuron module - Modular components for the Dendrite agent.
-
-This module contains cleanly separated components:
-- aggregation: Result aggregation and summarization
-- spawning: Dendrite (sub-neuron) spawning logic
+Neuron submodules for NeuronAgent.
+Contains modular implementations of key agent capabilities.
 """
 
 from agent.neuron import aggregation
 from agent.neuron import spawning
+from agent.neuron import validation
+from agent.neuron import decomposition
+from agent.neuron import execution
 
-__all__ = ['aggregation', 'spawning']
+__all__ = ['aggregation', 'spawning', 'validation', 'decomposition', 'execution']
 
 from .aggregation import (
     aggregate_results,
