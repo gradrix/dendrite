@@ -100,6 +100,13 @@ def execute_neuron(
     for attempt in range(1, max_retries + 1):
         logger.info(f"{indent}│  ├─ Attempt {attempt}/{max_retries}")
         
+        # Show previous error context if this is a retry
+        if previous_error and attempt > 1:
+            logger.info(f"{indent}│  │  📋 Retrying with error context from attempt {attempt-1}:")
+            logger.info(f"{indent}│  │     Error: {previous_error.get('error', 'unknown')}")
+            if previous_error.get('hint'):
+                logger.info(f"{indent}│  │     Hint: {previous_error['hint']}")
+        
         # Step 1: Find tool
         tool = micro_find_tool(neuron.description, context, tools, ollama)
         if not tool:
@@ -188,6 +195,14 @@ Generate the complete python_code parameter now as a string."""
                 
                 if should_retry and attempt < max_retries:
                     logger.info(f"{indent}│  │  🔄 Retrying with corrected code...")
+                    # Show what failed for transparency
+                    if 'python_code' in params:
+                        failed_code = params['python_code'][:200] + "..." if len(params['python_code']) > 200 else params['python_code']
+                        logger.info(f"{indent}│  │     ❌ Attempt {attempt} failed with code: {failed_code}")
+                    logger.info(f"{indent}│  │     💬 Error was: {error_msg}")
+                    if hint:
+                        logger.info(f"{indent}│  │     💡 Hint: {hint}")
+                    
                     # Store error context for next attempt
                     previous_error = {
                         'error': error_msg,
