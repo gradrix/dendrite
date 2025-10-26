@@ -595,7 +595,12 @@ def micro_determine_params(
     
     if dendrite_item:
         # Show the specific item we're processing
-        context_info += f"\n\nCurrent item data:\n{json.dumps(dendrite_item, indent=2)[:500]}"
+        # Filter out non-serializable objects (like Neuron instances)
+        try:
+            serializable_item = {k: v for k, v in dendrite_item.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+            context_info += f"\n\nCurrent item data:\n{json.dumps(serializable_item, indent=2)[:500]}"
+        except Exception as e:
+            context_info += f"\n\nCurrent item data: (serialization error: {e})"
     elif context:
         # Show detailed data from previous steps with actual values
         context_info += "\n\nData available from previous neurons (YOUR DISPOSAL - use as needed):"
@@ -603,6 +608,7 @@ def micro_determine_params(
         # UNIVERSAL CONTEXT GUIDE: Show what's available for ANY tool
         context_info += "\n\nCONTEXT KEYS AVAILABLE:"
         for key, value in context.items():
+
             if key.startswith('_'):  # Skip internal keys like _original_goal
                 continue
                 

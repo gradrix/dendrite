@@ -55,7 +55,7 @@ def micro_decompose(goal: str, depth: int, config: Dict, ollama, tools=None) -> 
         
         if data_tools:
             tool_catalog += "\n🏃 DATA TOOLS:\n"
-            for t in data_tools[:5]:
+            for t in data_tools[:10]:  # Show more data tools
                 tool_catalog += f"  - {t.name}: {t.description[:100]}...\n"
         
         if analysis_tools:
@@ -74,9 +74,10 @@ CORE PRINCIPLES:
 1. Each step = ONE atomic action (ONE tool call OR one computation)
 2. Think about the DATA FLOW: what data does each step need from previous steps?
 3. For "for each X do Y" patterns → fetch X first, then iterate (dendrites will spawn automatically)
-4. For counting/filtering large lists → use executeDataAnalysis with Python (100% accurate)
+4. executeDataAnalysis is for ANALYSIS ONLY (counting, filtering, formatting)
+   - ❌ NEVER use executeDataAnalysis to FETCH data from APIs
+   - ✅ Use it AFTER data is fetched to count/filter/format
    - BE EXPLICIT about filter conditions: e.g., "count items where field='value'"
-   - Don't just say "count certain items" - specify the exact field and value
 5. For date/time → check AVAILABLE TOOLS above, pick the right one for the time period
 6. NO DUPLICATES - each step must be unique
 
