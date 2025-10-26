@@ -56,30 +56,55 @@ def aggregate_results(
     
     # Collect all successful formatting results
     formatting_results = []
+    dendrite_result_neuron = None  # Track neuron with dendrite results
+    
     for neuron, result in zip(reversed(neurons), reversed(results)):
         logger.info(f"   Checking neuron {neuron.index}: {neuron.description[:50]}...")
         
         # Check result type first - if it's a string result from executeDataAnalysis, it's likely formatting
         found_result = False
         
-        # Check for AI response type
-        if isinstance(result, dict) and result.get('type') == 'ai_response':
-            formatting_results.append((neuron.index, result.get('answer', ''), 'ai'))
-            logger.info(f"   ✅ Found AI response")
+        # PRIORITY 1: Check for dendrite results (most important - has actual collected data)
+        if isinstance(result, dict) and 'dendrite_results' in result and result.get('items_processed', 0) > 0:
+            logger.info(f"   🌳 Found dendrite results: {result['items_processed']} items processed")
+            dendrite_result_neuron = (neuron.index, result, neuron)
+            # Don't add to formatting_results yet - we'll format it if needed
             found_result = True
-        # Check for executeDataAnalysis result with string output
+        # PRIORITY 2: Check for executeDataAnalysis result with string output (explicit formatting)
         elif isinstance(result, dict) and result.get('success') and 'result' in result and isinstance(result['result'], str):
             formatting_results.append((neuron.index, result['result'], 'python'))
             logger.info(f"   ✅ Found Python result with {len(result['result'].split(chr(10)))} lines")
             found_result = True
+        # PRIORITY 3: Check for AI response type (fallback - often just explanations)
+        elif isinstance(result, dict) and result.get('type') == 'ai_response':
+            # Only use AI response if it's NOT just explaining steps
+            answer = result.get('answer', '')
+            is_explanation = any(phrase in answer.lower() for phrase in ['step 1:', 'first,', 'to filter', 'we need to'])
+            if not is_explanation:
+                formatting_results.append((neuron.index, answer, 'ai'))
+                logger.info(f"   ✅ Found AI response")
+                found_result = True
+            else:
+                logger.info(f"   ⚠️ AI response looks like explanation, skipping")
         
         # If no result found, check if description suggests formatting
-        if not found_result:
+        if not found_result and neuron.index != (dendrite_result_neuron[0] if dendrite_result_neuron else None):
             is_formatting = any(kw in neuron.description.lower() for kw in formatting_keywords)
             if is_formatting:
                 logger.info(f"   ⚠️ Formatting keywords found but no string result")
     
     logger.info(f"📋 Found {len(formatting_results)} formatting results total")
+    
+    # If we have dendrite results but no formatting, auto-format them
+    if dendrite_result_neuron and not formatting_results:
+        logger.info(f"🌳 Auto-formatting dendrite results from neuron {dendrite_result_neuron[0]}")
+        formatted_text = format_dendrite_results(dendrite_result_neuron[1], goal)
+        if formatted_text:
+            logger.info(f"✅ Generated formatted output from dendrite results")
+            return {
+                'summary': formatted_text,
+                'detailed_results': results
+            }
     
     # If we have formatting results, pick the best one
     if formatting_results:
@@ -169,6 +194,98 @@ Provide a brief summary (2-3 sentences):"""
         'summary': response_str.strip(),
         'detailed_results': truncated_results
     }
+
+
+def format_dendrite_results(dendrite_data: Dict, goal: str) -> Optional[str]:
+    """
+    Format dendrite results into human-readable output.
+    
+    Extracts data from dendrite results and formats it based on the goal.
+    Completely domain-agnostic - works with any field names.
+    
+    Args:
+        dendrite_data: Dict with 'dendrite_results' and 'items_processed'
+        goal: Original goal to understand what format is needed
+        
+    Returns:
+        Formatted string or None if can't format
+    """
+    dendrite_results = dendrite_data.get('dendrite_results', [])
+    if not dendrite_results:
+        return None
+    
+    # Determine what type of data we're looking at
+    # Look at first dendrite's final result to understand structure
+    sample_result = None
+    for dr in dendrite_results:
+        if isinstance(dr, dict) and 'final' in dr and dr['final']:
+            sample_result = dr['final']
+            break
+        elif isinstance(dr, dict) and 'results' in dr and dr['results']:
+            sample_result = dr['results'][0] if dr['results'] else None
+            break
+    
+    if not sample_result:
+        return None
+    
+    # Generic approach: Look for common patterns in the data
+    formatted_lines = []
+    
+    # Check if goal asks for names/people (look for list fields with name-like data)
+    wants_names = any(word in goal.lower() for word in ['names', 'who', 'people', 'users', 'givers'])
+    
+    for i, dr in enumerate(dendrite_results, 1):
+        result = dr.get('final') or (dr.get('results', [{}])[0] if dr.get('results') else {})
+        
+        if not isinstance(result, dict):
+            continue
+        
+        # Look for list fields that might contain the answer
+        for key in ['athletes', 'users', 'people', 'members', 'participants', 'contributors', 'items', 'entries']:
+            if key in result and isinstance(result[key], list) and result[key]:
+                # Found a list of entities
+                entity_list = result[key]
+                
+                if wants_names:
+                    # Extract names from entities
+                    names = []
+                    for entity in entity_list:
+                        if isinstance(entity, dict):
+                            # Try common name fields
+                            name = entity.get('name') or entity.get('username') or entity.get('display_name') or entity.get('full_name')
+                            if name:
+                                names.append(name)
+                        elif isinstance(entity, str):
+                            names.append(entity)
+                    
+                    if names:
+                        # Get context about what these names are for
+                        context_id = result.get('id') or result.get('item_id') or result.get('record_id')
+                        count = result.get('count') or result.get(f'{key}_count') or len(names)
+                        
+                        # Format: "Item X: name1, name2, name3 (count)"
+                        if context_id:
+                            formatted_lines.append(f"Item {context_id}: {', '.join(names)} ({count} total)")
+                        else:
+                            formatted_lines.append(f"Item {i}: {', '.join(names)} ({count} total)")
+                        break
+                else:
+                    # Just show count of items
+                    count = len(entity_list)
+                    formatted_lines.append(f"Item {i}: {count} {key}")
+                    break
+        
+        # If no list found, check for simple count/status
+        if i > len(formatted_lines):  # Didn't add anything yet
+            if 'count' in result:
+                formatted_lines.append(f"Item {i}: {result['count']} items")
+            elif 'success' in result and result['success']:
+                formatted_lines.append(f"Item {i}: Completed successfully")
+    
+    if formatted_lines:
+        return '\n'.join(formatted_lines)
+    
+    return None
 
 
 def aggregate_dendrite_results(parent_result: Any, items: List[Dict], dendrite_results: List[Any]) -> Any:

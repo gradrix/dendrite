@@ -80,7 +80,7 @@ def execute_neuron(
         logger.info(f"{indent}│  ├─ Checking for pre-execution spawning...")
         logger.info(f"{indent}│  │  Context keys: {list(context.keys())}")
         
-        # Type 1: Iteration spawning ("for each activity")
+        # Type 1: Iteration spawning ("for each item")
         context_list = find_context_list_fn(neuron.description, context)
         if context_list:
             logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning (iterate over context)")
@@ -449,13 +449,12 @@ def clarify_vague_terms(neuron_desc: str, tool: Any, context: Dict, ollama: Any)
     
     # Common vague patterns
     vague_patterns = {
-        r'\bkudos data\b': 'kudos data',
         r'\bextract.*data\b': 'extract data',
         r'\bprocess.*items\b': 'process items',
         r'\bget.*information\b': 'get information',
         r'\bfetch.*details\b': 'fetch details',
-        r'\bprocess.*items\b': 'process items',
         r'\bhandle.*data\b': 'handle data',
+        r'\bretrieve.*content\b': 'retrieve content',
     }
     
     desc_lower = neuron_desc.lower()

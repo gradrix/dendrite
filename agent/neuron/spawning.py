@@ -499,9 +499,9 @@ Original task description: {neuron_desc}
 
 Output a short, actionable goal template using {{id}} for the item identifier.
 Example inputs:
-- "Get kudos for each activity" → "Get kudos for item {{id}}"
-- "Update each record" → "Update item {{id}}"
-- "Process all entries" → "Process item {{id}}"
+- "Get details for each record" → "Get details for item {{id}}"
+- "Update each entry" → "Update item {{id}}"
+- "Process all items" → "Process item {{id}}"
 
 Goal template:"""
         
