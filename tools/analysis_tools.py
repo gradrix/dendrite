@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
         {
             "name": "python_code",
             "type": "string",
-            "description": "Python code to execute. Has access to 'data' variable and load_data_reference() function. FOR FORMATTING: Build readable STRING, e.g. result = '\\n'.join([f\"{act['name']} - {act['distance']}m on {act['start_date'][:10]}\" for act in activities]). FOR COUNTING: result = len([x for x in activities if...]). IMPORTANT: If '_ref_id' in data, MUST load first: loaded = load_data_reference(data['key']['_ref_id']); activities = loaded['activities']. If no _ref_id: activities = data['key']['activities']. Must assign to 'result' variable.",
+            "description": "Python code to execute. Has access to 'data' variable and load_data_reference() function. FOR FORMATTING: Build readable STRING, e.g. result = '\\n'.join([f\"{item['name']} - {item['distance']}m on {item['start_date'][:10]}\" for item in items]). FOR COUNTING: result = len([x for x in items if...]). IMPORTANT: If '_ref_id' in data, MUST load first: loaded = load_data_reference(data['key']['_ref_id']); items = loaded['items']. If no _ref_id: items = data['key']['items']. Must assign to 'result' variable.",
             "required": True
         }
     ],
