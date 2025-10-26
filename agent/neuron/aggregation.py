@@ -106,7 +106,16 @@ def aggregate_results(
                 'detailed_results': results
             }
         else:
-            logger.warning(f"⚠️ Failed to format dendrite results, falling back to other formatting")
+            logger.warning(f"⚠️ Failed to format dendrite results")
+            # Try Python-based formatting as backup
+            python_formatted = try_python_formatting(dendrite_result_neuron[1], goal, neurons, results)
+            if python_formatted:
+                logger.info(f"✅ Python formatting succeeded as fallback")
+                return {
+                    'summary': python_formatted,
+                    'detailed_results': results
+                }
+            logger.warning(f"⚠️ All dendrite formatting attempts failed, falling back to other results")
     
     # PRIORITY 2: If no dendrite results (or formatting failed), use other formatting results
     if formatting_results:
@@ -198,6 +207,102 @@ Provide a brief summary (2-3 sentences):"""
     }
 
 
+def try_python_formatting(dendrite_data: Dict, goal: str, neurons: List, results: List) -> Optional[str]:
+    """
+    Try to format dendrite results using safe, pre-validated Python code.
+    
+    This is a fallback when format_dendrite_results() fails.
+    Generates simple, safe Python to extract and format the data.
+    
+    Args:
+        dendrite_data: Dict with 'dendrite_results' and 'items_processed'
+        goal: Original goal
+        neurons: List of neurons
+        results: List of results
+        
+    Returns:
+        Formatted string or None if failed
+    """
+    dendrite_results = dendrite_data.get('dendrite_results', [])
+    if not dendrite_results:
+        return None
+    
+    logger.info(f"🐍 Attempting Python-based formatting for {len(dendrite_results)} dendrite results")
+    
+    # Check if goal asks for names
+    wants_names = any(word in goal.lower() for word in ['names', 'who', 'people', 'users', 'givers'])
+    
+    # Generate safe Python code
+    if wants_names:
+        # Format: "Activity X: name1, name2, name3"
+        python_code = """
+formatted_lines = []
+dendrite_results = data.get('dendrite_results', [])
+for dr in dendrite_results:
+    final_result = dr.get('final', {})
+    if not isinstance(final_result, dict):
+        continue
+    
+    # Look for athletes/users/people lists
+    for key in ['athletes', 'users', 'people', 'members']:
+        if key in final_result and isinstance(final_result[key], list):
+            names = []
+            for entity in final_result[key]:
+                if isinstance(entity, dict):
+                    name = entity.get('name') or entity.get('username') or entity.get('display_name')
+                    if name:
+                        names.append(name)
+                elif isinstance(entity, str):
+                    names.append(entity)
+            
+            if names:
+                activity_id = final_result.get('activity_id') or final_result.get('id') or final_result.get('item_id')
+                if activity_id:
+                    formatted_lines.append(f"Activity {activity_id}: {', '.join(names)}")
+                break
+
+result = '\\n'.join(formatted_lines) if formatted_lines else None
+"""
+    else:
+        # Generic formatting
+        python_code = """
+formatted_lines = []
+dendrite_results = data.get('dendrite_results', [])
+for i, dr in enumerate(dendrite_results, 1):
+    final_result = dr.get('final', {})
+    if isinstance(final_result, dict) and final_result.get('success'):
+        formatted_lines.append(f"Item {i}: Success")
+    elif isinstance(final_result, dict) and 'error' in final_result:
+        continue  # Skip errors
+        
+result = '\\n'.join(formatted_lines) if formatted_lines else None
+"""
+    
+    # Execute safely
+    try:
+        from tools.analysis_tools import execute_data_analysis
+        # Build data context with all neurons + dendrite results
+        data_context = {
+            **{f'neuron_{n.index}': n.result for n in neurons if n.result},
+            **results,  # Include other context data
+            'dendrite_results': dendrite_results
+        }
+        exec_result = execute_data_analysis(
+            python_code=python_code.strip(),
+            **data_context
+        )
+        
+        if exec_result.get('success') and exec_result.get('result'):
+            logger.info(f"✅ Python formatting succeeded as fallback")
+            return exec_result['result']
+        else:
+            logger.warning(f"⚠️ Python formatting failed: {exec_result.get('error')}")
+            return None
+    except Exception as e:
+        logger.error(f"❌ Python formatting exception: {e}")
+        return None
+
+
 def format_dendrite_results(dendrite_data: Dict, goal: str) -> Optional[str]:
     """
     Format dendrite results into human-readable output.
@@ -214,7 +319,10 @@ def format_dendrite_results(dendrite_data: Dict, goal: str) -> Optional[str]:
     """
     dendrite_results = dendrite_data.get('dendrite_results', [])
     if not dendrite_results:
+        logger.warning("⚠️ No dendrite_results found in dendrite_data")
         return None
+    
+    logger.info(f"🔍 Formatting {len(dendrite_results)} dendrite results")
     
     # Determine what type of data we're looking at
     # Look at first dendrite's final result to understand structure
@@ -222,12 +330,15 @@ def format_dendrite_results(dendrite_data: Dict, goal: str) -> Optional[str]:
     for dr in dendrite_results:
         if isinstance(dr, dict) and 'final' in dr and dr['final']:
             sample_result = dr['final']
+            logger.info(f"📦 Found sample result in 'final': {list(sample_result.keys()) if isinstance(sample_result, dict) else type(sample_result)}")
             break
         elif isinstance(dr, dict) and 'results' in dr and dr['results']:
             sample_result = dr['results'][0] if dr['results'] else None
+            logger.info(f"📦 Found sample result in 'results[0]': {list(sample_result.keys()) if isinstance(sample_result, dict) else type(sample_result)}")
             break
     
     if not sample_result:
+        logger.warning("⚠️ Could not find sample_result in dendrite_results")
         return None
     
     # Generic approach: Look for common patterns in the data
@@ -235,16 +346,21 @@ def format_dendrite_results(dendrite_data: Dict, goal: str) -> Optional[str]:
     
     # Check if goal asks for names/people (look for list fields with name-like data)
     wants_names = any(word in goal.lower() for word in ['names', 'who', 'people', 'users', 'givers'])
+    logger.info(f"🎯 wants_names={wants_names} based on goal: {goal[:50]}...")
     
     for i, dr in enumerate(dendrite_results, 1):
         result = dr.get('final') or (dr.get('results', [{}])[0] if dr.get('results') else {})
         
         if not isinstance(result, dict):
+            logger.info(f"   Item {i}: result is not a dict, skipping")
             continue
+        
+        logger.info(f"   Item {i}: checking fields {list(result.keys())}")
         
         # Look for list fields that might contain the answer
         for key in ['athletes', 'users', 'people', 'members', 'participants', 'contributors', 'items', 'entries']:
             if key in result and isinstance(result[key], list) and result[key]:
+                logger.info(f"   ✓ Found list field '{key}' with {len(result[key])} items")
                 # Found a list of entities
                 entity_list = result[key]
                 
@@ -262,15 +378,19 @@ def format_dendrite_results(dendrite_data: Dict, goal: str) -> Optional[str]:
                     
                     if names:
                         # Get context about what these names are for
-                        context_id = result.get('id') or result.get('item_id') or result.get('record_id')
-                        count = result.get('count') or result.get(f'{key}_count') or len(names)
+                        context_id = result.get('activity_id') or result.get('id') or result.get('item_id') or result.get('record_id')
+                        count = result.get(f'{key}_count') or result.get('count') or len(names)
                         
                         # Format: "Item X: name1, name2, name3 (count)"
                         if context_id:
-                            formatted_lines.append(f"Item {context_id}: {', '.join(names)} ({count} total)")
+                            formatted_lines.append(f"Activity {context_id}: {', '.join(names)} ({count} total)")
+                            logger.info(f"   ✓ Formatted as: Activity {context_id}: {len(names)} names")
                         else:
                             formatted_lines.append(f"Item {i}: {', '.join(names)} ({count} total)")
+                            logger.info(f"   ✓ Formatted as: Item {i}: {len(names)} names")
                         break
+                    else:
+                        logger.info(f"   ✗ No names extracted from {len(entity_list)} entities")
                 else:
                     # Just show count of items
                     count = len(entity_list)
@@ -285,8 +405,10 @@ def format_dendrite_results(dendrite_data: Dict, goal: str) -> Optional[str]:
                 formatted_lines.append(f"Item {i}: Completed successfully")
     
     if formatted_lines:
+        logger.info(f"✅ Successfully formatted {len(formatted_lines)} dendrite results")
         return '\n'.join(formatted_lines)
     
+    logger.warning(f"⚠️ Could not format any of {len(dendrite_results)} dendrite results")
     return None
 
 

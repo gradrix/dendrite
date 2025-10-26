@@ -82,6 +82,11 @@ class NeuronAgent:
         self.config = config or {}
         self.context: Dict[str, Any] = {}
         self.execution_log: List[str] = []  # For debugging
+        
+        # Generate unique run ID for this execution (prevents cache reuse across runs)
+        import time
+        self.run_id = f"{int(time.time())}_{id(self) % 10000:04d}"
+        logger.debug(f"🆔 Run ID: {self.run_id}")
     
     def _check_memory_relevance(self, goal: str) -> Dict[str, Any]:
         """
@@ -229,7 +234,7 @@ If none relevant, output:
                 
                 # Store in context (auto-saves large data to disk)
                 context_key = f'neuron_{depth}_{neuron.index}'
-                compact_result = compact_data(result, context_key=context_key)
+                compact_result = compact_data(result, context_key=context_key, run_id=self.run_id)
                 self.context[context_key] = compact_result
                 
             except Exception as e:

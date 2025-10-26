@@ -49,7 +49,7 @@ def execute_data_analysis(python_code: str, **context) -> Dict[str, Any]:
     try:
         # Validate syntax first
         try:
-            ast.parse(python_code)
+            parsed = ast.parse(python_code)
         except SyntaxError as e:
             logger.error(f"❌ Syntax error in Python code: {e}")
             return {
@@ -57,6 +57,34 @@ def execute_data_analysis(python_code: str, **context) -> Dict[str, Any]:
                 'error': f"Syntax error: {e}",
                 'retry': True
             }
+        
+        # Check for undefined variables (like 'items' when it doesn't exist)
+        # This catches common AI mistakes where it assumes variables exist
+        used_names = set()
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                used_names.add(node.id)
+        
+        # Variables that will be available during execution
+        available_vars = {'data', 'result', 'load_data_reference', 'len', 'sum', 'min', 'max', 
+                         'sorted', 'list', 'dict', 'str', 'int', 'float', 'bool', 'enumerate', 
+                         'range', 'zip', 'filter', 'map', 'any', 'all', 'round', 'abs'}
+        
+        # Check if code uses undefined variables
+        undefined = used_names - available_vars
+        if undefined:
+            # Common mistake: using 'items' without defining it first
+            if 'items' in undefined:
+                logger.error(f"❌ Variable 'items' is not defined. Must extract from data first!")
+                return {
+                    'success': False,
+                    'error': "name 'items' is not defined",
+                    'retry': True,
+                    'hint': "Need to extract items from data first. Check if data has '_ref_id' and load it, or access data['key']['items']. Available keys: " + str(list(context.keys()))
+                }
+            else:
+                logger.warning(f"⚠️ Code uses potentially undefined variables: {undefined}")
+                # Don't block - might be defined in the code itself
         
         # Check for dangerous patterns
         dangerous_patterns = ['import os', 'import sys', 'import subprocess', '__import__', 'eval(', 'exec(', 'open(', 'file(']

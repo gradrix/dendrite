@@ -22,13 +22,14 @@ MAX_CONTEXT_SIZE_BYTES = 5000  # Store full data if under 5KB, otherwise save to
 STATE_DIR = Path(__file__).parent.parent / "state" / "data_cache"
 
 
-def compact_data(data: Any, context_key: str = "data") -> Any:
+def compact_data(data: Any, context_key: str = "data", run_id: Optional[str] = None) -> Any:
     """
     Smart data storage: Keep small data in context, save large data to disk.
     
     Args:
         data: The data to store (any type)
         context_key: Key name for this data (used in filename)
+        run_id: Unique run identifier to prevent cache reuse across runs
         
     Returns:
         Either the original data (if small) or a reference dict (if large)
@@ -47,9 +48,9 @@ def compact_data(data: Any, context_key: str = "data") -> Any:
     # Create state directory if needed
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     
-    # Generate reference ID from content hash
+    # Generate reference ID with run_id to prevent cache reuse
     data_hash = hashlib.md5(data_str.encode()).hexdigest()[:12]
-    ref_id = f"{context_key}_{data_hash}"
+    ref_id = f"{context_key}_{run_id}_{data_hash}" if run_id else f"{context_key}_{data_hash}"
     
     # Save full data to disk
     data_file = STATE_DIR / f"{ref_id}.json"

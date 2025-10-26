@@ -160,11 +160,13 @@ def spawn_dendrites_from_context(
         logger.info(f"{indent}│  ├─ Dendrite {i}/{len(items)}")
         
         # Debug: log item structure
-        logger.debug(f"Item {i} keys: {list(item.keys())}, has 'id': {'id' in item}")
+        logger.info(f"{indent}│  │  Item {i} keys: {list(item.keys())[:10]}, has 'id': {'id' in item}")
+        if 'id' in item:
+            logger.info(f"{indent}│  │  Item {i} id value: {item['id']}")
         
         # Format goal for this specific item
         item_goal = format_item_goal(item_goal_template, item, i)
-        logger.debug(f"Formatted goal: {item_goal}")
+        logger.info(f"{indent}│  │  Formatted goal: {item_goal}")
         
         # IMPORTANT: Store item data in context so it can be used for parameter extraction
         item_context_key = f'dendrite_item_{parent_neuron.depth + 1}_{i}'
