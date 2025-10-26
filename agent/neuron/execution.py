@@ -129,27 +129,31 @@ def execute_neuron(
             logger.warning(f"{indent}│  ⚠️ Code generation explicitly required, retrying with enhanced prompt...")
             task_desc = params.get('task', neuron.description)
             
-            # Build enhanced prompt that forces code generation
-            enhanced_prompt = f"""You MUST generate Python code for this data analysis task.
+            # Build enhanced error context for retry
+            enhanced_error = {
+                'error': 'python_code parameter is required but was not generated',
+                'hint': f"""CRITICAL: You MUST generate Python code for this task.
 
 Task: {task_desc}
 
-CRITICAL REQUIREMENTS:
-1. You MUST return a JSON object with a 'python_code' field containing executable Python code
-2. The code should analyze the data available in the context
-3. Use the variables available: {', '.join([k for k in context.keys() if not k.startswith('_')])}
+Available data in context: {', '.join([k for k in context.keys() if not k.startswith('_')])}
 
-Generate the complete python_code parameter now as a string."""
+You MUST return JSON with a 'python_code' field containing executable Python code.
+Example: {{"python_code": "my_list = get_context_list('neuron_0_2')\\nresult = len(my_list)"}}
 
-            # Retry parameter determination with explicit code generation request
+Generate the complete python_code parameter now.""",
+                'failed_params': {}
+            }
+            
+            # Retry parameter determination with explicit code generation instructions
             try:
                 params = micro_determine_params(
-                    enhanced_prompt,
+                    neuron.description,  # Use original description, not enhanced prompt
                     tool,
                     context,
                     ollama,
                     summarize_result_fn,
-                    previous_error=f"Previous attempt failed to generate required python_code parameter"
+                    previous_error=enhanced_error  # Pass as error context
                 )
             except Exception as retry_error:
                 logger.error(f"{indent}│  ❌ Code generation retry failed: {retry_error}")
