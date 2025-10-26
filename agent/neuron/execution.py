@@ -1004,17 +1004,59 @@ def reflect_on_missing_param(
     Returns:
         Dictionary with suggested_value if found
     """
+    # Debug: Log what context keys are available
+    context_keys = [k for k in context.keys() if not k.startswith('_')]
+    logger.info(f"   🔍 Context keys available: {context_keys[:10]}")
+    
     # Look for obvious matches in context first
     for key, value in context.items():
         if key.startswith('dendrite_item_') and isinstance(value, dict):
             # Check if this item has the parameter we need
             if missing_param in value:
-                logger.info(f"   Found {missing_param} in {key}: {value[missing_param]}")
+                logger.info(f"   💡 Found {missing_param} in {key}: {value[missing_param]}")
                 return {'suggested_value': value[missing_param]}
             # Check common ID field mappings
             if missing_param.endswith('_id') and 'id' in value:
-                logger.info(f"   Found 'id' in {key}, mapping to {missing_param}: {value['id']}")
+                logger.info(f"   💡 Found 'id' in {key}, mapping to {missing_param}: {value['id']}")
                 return {'suggested_value': value['id']}
+    
+    # If not found in dendrite_item, look in _memory for lists with id fields
+    # This handles cases where we're iterating over wrong data structure
+    if missing_param.endswith('_id') or missing_param == 'id' or missing_param == 'activity_id':
+        memory = context.get('_memory', {})
+        
+        # Find the dendrite item index from context keys
+        dendrite_index = None
+        for key in context.keys():
+            if key.startswith('dendrite_item_'):
+                # Extract index: dendrite_item_1_2 -> index 2
+                parts = key.split('_')
+                if len(parts) >= 4:
+                    try:
+                        dendrite_index = int(parts[-1])
+                        logger.info(f"   🔢 Detected dendrite index: {dendrite_index}")
+                        break
+                    except ValueError:
+                        pass
+        
+        if dendrite_index is not None:
+            # Look for lists in memory that have 'id' fields
+            for mem_key, mem_value in memory.items():
+                if isinstance(mem_value, dict):
+                    # Try different common field names for lists
+                    entries = mem_value.get('entries') or mem_value.get('items') or mem_value.get('data')
+                    if isinstance(entries, list) and len(entries) > 0:
+                        # Check if entries have 'id' field
+                        if 'id' in entries[0]:
+                            # Try to get the item at dendrite_index - 1 (1-indexed to 0-indexed)
+                            if 0 <= dendrite_index - 1 < len(entries):
+                                item = entries[dendrite_index - 1]
+                                if 'id' in item:
+                                    logger.info(f"   💡 Found 'id' in _memory.{mem_key}.entries[{dendrite_index-1}]: {item['id']}")
+                                    # Also log item name for better UX per user request
+                                    item_name = item.get('name') or item.get('description') or item.get('title') or f"item {dendrite_index}"
+                                    logger.info(f"   📝 Item name: {item_name}")
+                                    return {'suggested_value': item['id']}
     
     # Build focused prompt
     context_hints = []
