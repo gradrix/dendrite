@@ -173,6 +173,11 @@ def spawn_dendrites_from_context(
     seen_param_sets = []  # Track parameter combinations to detect duplicates
     duplicate_count = 0
     
+    # CODE TEMPLATE CACHING: Reuse successful code from first dendrite
+    cached_code_template = None
+    cached_tool_name = None
+    first_item_id = None
+    
     # Spawn dendrite for each item
     dendrite_results = []
     for i, item in enumerate(items, 1):
@@ -202,8 +207,40 @@ def spawn_dendrites_from_context(
         item_context_key = f'dendrite_item_{parent_neuron.depth + 1}_{i}'
         context[item_context_key] = item
         
-        # Execute recursively via callback
+        # OPTIMIZATION: Try to reuse cached code template from first successful dendrite
+        if i > 1 and cached_code_template and cached_tool_name:
+            try:
+                # Try to adapt cached code for this item
+                adapted_result = try_reuse_code_template(
+                    cached_code_template,
+                    cached_tool_name,
+                    first_item_id,
+                    item.get('id'),
+                    item_context_key,
+                    context,
+                    indent
+                )
+                
+                if adapted_result:
+                    logger.info(f"{indent}│  │  ✅ Reused code template from dendrite 1 (skipped LLM call)")
+                    dendrite_result = adapted_result
+                    # Skip normal execution, use adapted result
+                    context.pop(item_context_key, None)
+                    dendrite_results.append(dendrite_result)
+                    continue
+            except Exception as e:
+                logger.debug(f"{indent}│  │  ⚠️  Code reuse failed: {e}, falling back to normal execution")
+        
+        # Execute recursively via callback (normal path or first dendrite)
         dendrite_result = execute_goal_fn(item_goal, depth=parent_neuron.depth + 1)
+        
+        # CACHE EXTRACTION: After first successful dendrite, extract code template
+        if i == 1 and dendrite_result.get('success'):
+            cached_code_template, cached_tool_name, first_item_id = extract_code_template_from_result(
+                dendrite_result,
+                item.get('id'),
+                indent
+            )
         
         # Clean up item context after execution
         context.pop(item_context_key, None)
@@ -740,3 +777,135 @@ Goal template:"""
     
     # Last resort: just use the description as-is
     return f"Process item {{id}}: {neuron_desc}"
+
+
+def extract_code_template_from_result(dendrite_result: Dict, item_id: Any, indent: str) -> tuple:
+    """
+    Extract reusable code template from first successful dendrite result.
+    
+    Returns:
+        (code_template, tool_name, item_id) or (None, None, None) if extraction fails
+    """
+    if not dendrite_result.get('success'):
+        return None, None, None
+    
+    # Check if result contains neurons with executeDataAnalysis calls
+    neurons = dendrite_result.get('neurons', [])
+    for neuron in neurons:
+        if not isinstance(neuron, dict):
+            continue
+        
+        tool_name = neuron.get('tool_used')
+        params = neuron.get('params', {})
+        
+        if tool_name == 'executeDataAnalysis' and 'python_code' in params:
+            code = params['python_code']
+            logger.info(f"{indent}│  │  💾 Cached code template from dendrite 1 for reuse")
+            logger.debug(f"{indent}│  │     Template: {code[:100]}...")
+            return code, tool_name, item_id
+        
+        # Also check getActivityKudos or similar tools with activity_id
+        if tool_name in ['getActivityKudos', 'getActivityParticipants'] and 'activity_id' in params:
+            # Store the tool call pattern
+            return params, tool_name, item_id
+    
+    return None, None, None
+
+
+def try_reuse_code_template(
+    cached_template: Any,
+    tool_name: str,
+    original_item_id: Any,
+    new_item_id: Any,
+    item_context_key: str,
+    context: Dict,
+    indent: str
+) -> Optional[Dict]:
+    """
+    Try to reuse cached code/params from first dendrite for subsequent dendrites.
+    
+    Args:
+        cached_template: Code string or params dict from first dendrite
+        tool_name: Tool that was used
+        original_item_id: ID from first item
+        new_item_id: ID from current item
+        item_context_key: Context key for current dendrite item
+        context: Full context dict
+        indent: Logging indent
+        
+    Returns:
+        Result dict if reuse successful, None if should fall back to normal execution
+    """
+    import re
+    
+    if tool_name == 'executeDataAnalysis' and isinstance(cached_template, str):
+        # Adapt Python code by replacing IDs and context keys
+        adapted_code = cached_template
+        
+        # Replace old item ID with new one (handle both string and int)
+        if original_item_id and new_item_id:
+            adapted_code = adapted_code.replace(str(original_item_id), str(new_item_id))
+            adapted_code = adapted_code.replace(f"'{original_item_id}'", f"'{new_item_id}'")
+            adapted_code = adapted_code.replace(f'"{original_item_id}"', f'"{new_item_id}"')
+        
+        # Replace dendrite_item context keys (dendrite_item_1_1 → dendrite_item_1_2)
+        adapted_code = re.sub(
+            r"dendrite_item_\d+_\d+",
+            item_context_key,
+            adapted_code
+        )
+        
+        logger.debug(f"{indent}│  │     Adapted code: {adapted_code[:100]}...")
+        
+        # Execute the adapted code directly
+        try:
+            from agent.tool_registry import get_tool_registry
+            registry = get_tool_registry()
+            tool = registry.get_tool('executeDataAnalysis')
+            
+            if tool:
+                result = tool.execute(python_code=adapted_code, **context)
+                
+                # Wrap in neuron structure to match expected format
+                return {
+                    'success': result.get('success', True),
+                    'neurons': [{
+                        'tool_used': 'executeDataAnalysis',
+                        'params': {'python_code': adapted_code},
+                        'result': result
+                    }],
+                    'final': result,
+                    '_code_reused': True
+                }
+        except Exception as e:
+            logger.debug(f"{indent}│  │     Code execution failed: {e}")
+            return None
+    
+    elif tool_name in ['getActivityKudos', 'getActivityParticipants'] and isinstance(cached_template, dict):
+        # Reuse tool call with updated ID
+        adapted_params = cached_template.copy()
+        adapted_params['activity_id'] = new_item_id
+        
+        try:
+            from agent.tool_registry import get_tool_registry
+            registry = get_tool_registry()
+            tool = registry.get_tool(tool_name)
+            
+            if tool:
+                result = tool.execute(**adapted_params)
+                
+                return {
+                    'success': result.get('success', True),
+                    'neurons': [{
+                        'tool_used': tool_name,
+                        'params': adapted_params,
+                        'result': result
+                    }],
+                    'final': result,
+                    '_code_reused': True
+                }
+        except Exception as e:
+            logger.debug(f"{indent}│  │     Tool call failed: {e}")
+            return None
+    
+    return None
