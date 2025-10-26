@@ -117,6 +117,37 @@ def execute_neuron(
             logger.info(f"{indent}│  Traceback:\n{traceback.format_exc()}")
             raise
         
+        # Step 2.1: Handle special case where code generation is explicitly needed
+        if isinstance(params, dict) and params.get('_needs_code_generation'):
+            logger.warning(f"{indent}│  ⚠️ Code generation explicitly required, retrying with enhanced prompt...")
+            task_desc = params.get('task', neuron.description)
+            
+            # Build enhanced prompt that forces code generation
+            enhanced_prompt = f"""You MUST generate Python code for this data analysis task.
+
+Task: {task_desc}
+
+CRITICAL REQUIREMENTS:
+1. You MUST return a JSON object with a 'python_code' field containing executable Python code
+2. The code should analyze the data available in the context
+3. Use the variables available: {', '.join([k for k in context.keys() if not k.startswith('_')])}
+
+Generate the complete python_code parameter now as a string."""
+
+            # Retry parameter determination with explicit code generation request
+            try:
+                params = micro_determine_params(
+                    enhanced_prompt,
+                    tool,
+                    context,
+                    ollama,
+                    summarize_result_fn,
+                    previous_error=f"Previous attempt failed to generate required python_code parameter"
+                )
+            except Exception as retry_error:
+                logger.error(f"{indent}│  ❌ Code generation retry failed: {retry_error}")
+                raise
+        
         try:
             params_str = json.dumps(params)[:100]
         except Exception as je:
@@ -983,6 +1014,15 @@ Output JSON only (no explanation):""".format(
                                     break
             
             logger.debug(f"   │  │  📦 Final parameters: {final_params}")
+            
+            # CRITICAL FIX: If tool is executeDataAnalysis and python_code is missing, this is an error
+            if tool.name == 'executeDataAnalysis' and 'python_code' not in final_params:
+                logger.error(f"   │  │  ❌ CRITICAL: executeDataAnalysis requires python_code but it's missing!")
+                logger.error(f"   │  │     Task: {neuron_desc}")
+                logger.error(f"   │  │     This usually means the AI was forced to use Python but didn't generate code")
+                logger.error(f"   │  │     Returning error to trigger retry with explicit code generation")
+                return {'_needs_code_generation': True, 'task': neuron_desc}
+            
             return final_params
             
         except json.JSONDecodeError as e:
