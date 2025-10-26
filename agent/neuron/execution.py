@@ -37,7 +37,7 @@ def execute_neuron(
     detect_spawn_needed_fn: Any,
     ai_response_fn: Any,
     max_depth: int = 4,
-    max_retries: int = 3
+    max_retries: int = 5
 ) -> Any:
     """
     Execute a single neuron with validation and auto-spawning.
@@ -736,7 +736,16 @@ def micro_determine_params(
                     context_info += f"\n     → ⚠️ WARNING: NO '_ref_id' field! This is NOT disk data!"
                     context_info += f"\n     → ❌ DO NOT try: load_data_reference(data['{key}']['_ref_id']) - will fail!"
                 else:
-                    context_info += f"\n  📋 {key}: {summarize_result_fn(value)}"
+                    # Regular dict or other value - show structure for dicts
+                    if isinstance(value, dict) and len(value) > 0:
+                        # Show keys available in this dict
+                        dict_keys = list(value.keys())
+                        context_info += f"\n  📋 {key}: Dict with {len(dict_keys)} keys"
+                        context_info += f"\n     🔑 Available keys: {dict_keys[:30]}"
+                        context_info += f"\n     ⚠️  USE THESE KEYS! Access via data['{key}']['field_name']"
+                        context_info += f"\n     ⚠️  This is NOT disk data - NO _ref_id! Access fields directly!"
+                    else:
+                        context_info += f"\n  📋 {key}: {summarize_result_fn(value)}"
         
         context_info += "\n\nHOW TO USE CONTEXT DATA:"
         context_info += "\n  - CRITICAL: ONLY use context keys that are listed above! Don't invent keys that don't exist!"
@@ -749,20 +758,56 @@ def micro_determine_params(
     # Add previous error context if retrying
     error_context = ""
     if previous_error:
+        error_msg = previous_error.get('error', 'Unknown')
+        hint = previous_error.get('hint', 'N/A')
+        failed_code = previous_error.get('failed_params', {}).get('python_code', '')
+        
+        # Special handling for executeDataAnalysis code errors
+        code_fix_instructions = ""
+        if tool.name == 'executeDataAnalysis':
+            code_fix_instructions = """
+
+🔧 PYTHON CODE GENERATION RULES (AFTER FAILURE):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❌ PREVIOUS CODE FAILED - Generate NEW code following these STRICT rules:
+
+1. **NEVER use variable 'items' directly** - it doesn't exist!
+2. **MANDATORY 3-STEP PATTERN:**
+   Step 1: loaded = load_data_reference(data['ACTUAL_KEY']['_ref_id'])
+   Step 2: my_list = loaded.get('items') or loaded.get('data') or loaded
+   Step 3: result = ... (use my_list, NOT items)
+
+3. **ONLY use keys that ACTUALLY EXIST in context above!**
+   - Look at "CONTEXT KEYS AVAILABLE" section
+   - If context shows 'neuron_1_2' → use data['neuron_1_2']
+   - DO NOT invent keys like 'neuron_0_X' or placeholder names
+
+4. **Check data structure shown above for EXACT field names:**
+   - If structure shows ['name', 'distance', 'start_date_local']
+   - DO NOT reference fields like 'athlete', 'description' if not listed
+   - Use ONLY the fields shown in structure inspection
+
+EXAMPLE FIX:
+❌ BAD (what failed):
+```python
+result = '\\n'.join([f"{item['name']}" for item in items])  # items undefined!
+```
+
+✅ GOOD (corrected):
+```python
+loaded = load_data_reference(data['neuron_1_2']['_ref_id'])
+my_list = loaded.get('items') or loaded.get('data') or loaded
+result = '\\n'.join([f"{x['name']}" for x in my_list])
+```
+"""
+        
         error_context = f"""
 
 ⚠️ PREVIOUS ATTEMPT FAILED:
-Error: {previous_error.get('error', 'Unknown')}
-Hint: {previous_error.get('hint', 'N/A')}
-
-IMPORTANT - Learn from this failure:
-- The previous code had errors that must be fixed
-- Pay special attention to the hint provided
-- DO NOT repeat the same mistake
-- If error mentions 'items' not defined, you MUST extract items from data first like:
-  loaded = load_data_reference(data['neuron_X_Y']['_ref_id'])
-  items = loaded.get('items') or loaded.get('data') or loaded.get('entries')
-- Then use 'items' in your code
+Error: {error_msg}
+Hint: {hint}
+{code_fix_instructions}
+IMPORTANT - Your previous output had errors and MUST be completely regenerated following the rules above!
 
 """
     
