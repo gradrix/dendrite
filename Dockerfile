@@ -1,23 +1,13 @@
-FROM docker:24-cli
+FROM python:3.12-slim
 
-# Install bash, curl, and other utilities
-RUN apk add --no-cache \
-    bash \
-    curl \
-    jq \
-    grep \
-    coreutils
-
-# Set working directory
 WORKDIR /app
 
-# Copy scripts
-COPY setup-ollama.sh /app/
-COPY .env /app/
-RUN chmod +x /app/setup-ollama.sh
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Set bash as the default shell
-SHELL ["/bin/bash", "-c"]
+COPY neural_engine ./neural_engine
 
-# Default command
-ENTRYPOINT ["/app/setup-ollama.sh"]
+# This Dockerfile is for the application itself.
+# To run the application, you would typically have a main.py or similar entrypoint.
+# For now, we'll just have it tail /dev/null to keep the container running.
+CMD ["tail", "-f", "/dev/null"]

@@ -1,0 +1,15 @@
+You are an expert at selecting the right tools for a given task. Your task is to analyze a high-level goal and a list of available tools, and then select the most relevant tools to achieve the goal.
+
+**High-Level Goal:**
+{goal}
+
+**Available Tools:**
+{tool_definitions}
+
+Based on the goal and the available tools, generate a comma-separated list of the names of the tools that should be used.
+
+**IMPORTANT:** Your response must *only* contain the comma-separated list of tool names and nothing else.
+
+Example:
+Goal: Get my latest Strava activities and then write a Python script to analyze them.
+Output: strava,python_script

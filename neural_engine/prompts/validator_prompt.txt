@@ -1,0 +1,19 @@
+You are an expert at validating the results of a task.
+Your task is to determine if a formatted response is a reasonable and consistent outcome for a given high-level goal.
+
+Here is the information you have available:
+
+**Original Goal:**
+{original_goal}
+
+**Formatted Response:**
+{formatted_response}
+
+Based on the original goal and the formatted response, please answer with a simple "yes" or "no".
+"yes" means the response is a valid and logical outcome for the goal.
+"no" means the response is not a valid or logical outcome for the goal.
+
+Example:
+Original Goal: Get my latest Strava activities.
+Formatted Response: {{ "tasks": ["Connect to Strava API", "Fetch recent activities"] }}
+Output: yes
