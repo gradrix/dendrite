@@ -742,18 +742,18 @@ def micro_determine_params(
                         dict_keys = list(value.keys())
                         context_info += f"\n  📋 {key}: Dict with {len(dict_keys)} keys"
                         context_info += f"\n     🔑 Available keys: {dict_keys[:30]}"
-                        context_info += f"\n     ⚠️  USE THESE KEYS! Access via data['{key}']['field_name']"
-                        context_info += f"\n     ⚠️  This is NOT disk data - NO _ref_id! Access fields directly!"
+                        context_info += f"\n     💡 Access via: get_context_field('{key}', 'field_name')"
                     else:
                         context_info += f"\n  📋 {key}: {summarize_result_fn(value)}"
         
-        context_info += "\n\nHOW TO USE CONTEXT DATA:"
-        context_info += "\n  - CRITICAL: ONLY use context keys that are listed above! Don't invent keys that don't exist!"
-        context_info += "\n  - If you need data that's not in context, the tool will fail. That's OK - describe what you need."
-        context_info += "\n  - If tool needs 'entries' parameter and context shows DATA → copy that data AS-IS (keep field names unchanged)"
-        context_info += "\n  - For scalar results (📊), access fields directly: data['neuron_X_Y']['unix_timestamp']"
-        context_info += "\n  - For disk data (📦), use: data['neuron_X_Y']['_ref_id'] then load_data_reference(...)"
-        context_info += "\n  - NEVER try to load_data_reference on scalar results - they have NO _ref_id!"
+        context_info += "\n\n✨ SIMPLE DATA ACCESS (for executeDataAnalysis):"
+        context_info += "\n  Use these helper functions - they handle everything automatically:"
+        context_info += "\n  • get_context_list('key') - Returns list (handles disk/inline/result formats)"
+        context_info += "\n  • get_context_data('key') - Returns any data type"
+        context_info += "\n  • get_context_field('key', 'field') - Get specific field from dict"
+        context_info += "\n\n  Example: my_list = get_context_list('neuron_0_2')"
+        context_info += "\n           result = '\\n'.join([f\"{x['name']}\" for x in my_list])"
+        context_info += "\n\n  ⚠️  CRITICAL: ONLY use keys listed above! Don't invent keys!"
     
     # Add previous error context if retrying
     error_context = ""
@@ -769,36 +769,38 @@ def micro_determine_params(
 
 🔧 PYTHON CODE GENERATION RULES (AFTER FAILURE):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-❌ PREVIOUS CODE FAILED - Generate NEW code following these STRICT rules:
+❌ PREVIOUS CODE FAILED - Generate NEW code following SIMPLE pattern:
 
-1. **NEVER use variable 'items' directly** - it doesn't exist!
-2. **MANDATORY 3-STEP PATTERN:**
-   Step 1: loaded = load_data_reference(data['ACTUAL_KEY']['_ref_id'])
-   Step 2: my_list = loaded.get('items') or loaded.get('data') or loaded
-   Step 3: result = ... (use my_list, NOT items)
+✅ USE THESE HELPER FUNCTIONS (they handle everything automatically):
+   • get_context_list('key') - Returns list, handles disk/inline automatically
+   • get_context_data('key') - Returns any data type
+   • get_context_field('key', 'field') - Get specific field
 
-3. **ONLY use keys that ACTUALLY EXIST in context above!**
-   - Look at "CONTEXT KEYS AVAILABLE" section
-   - If context shows 'neuron_1_2' → use data['neuron_1_2']
-   - DO NOT invent keys like 'neuron_0_X' or placeholder names
+❌ DO NOT USE:
+   • load_data_reference() - DEPRECATED, use helpers instead
+   • data['key']['_ref_id'] - DEPRECATED, use helpers instead
+   • Complex 3-step load pattern - DEPRECATED, use helpers instead
 
-4. **Check data structure shown above for EXACT field names:**
-   - If structure shows ['name', 'distance', 'start_date_local']
-   - DO NOT reference fields like 'athlete', 'description' if not listed
-   - Use ONLY the fields shown in structure inspection
+📋 SIMPLE 2-STEP PATTERN:
+   Step 1: my_list = get_context_list('neuron_0_2')
+   Step 2: result = '\\n'.join([f"{x['name']}" for x in my_list])
 
-EXAMPLE FIX:
-❌ BAD (what failed):
+EXAMPLE - OLD vs NEW:
+❌ OLD (complex, error-prone):
 ```python
-result = '\\n'.join([f"{item['name']}" for item in items])  # items undefined!
-```
-
-✅ GOOD (corrected):
-```python
-loaded = load_data_reference(data['neuron_1_2']['_ref_id'])
-my_list = loaded.get('items') or loaded.get('data') or loaded
+ref_id = data['neuron_0_2']['_ref_id']
+loaded = load_data_reference(ref_id)
+my_list = loaded.get('items') or loaded
 result = '\\n'.join([f"{x['name']}" for x in my_list])
 ```
+
+✅ NEW (simple, works always):
+```python
+my_list = get_context_list('neuron_0_2')
+result = '\\n'.join([f"{x['name']}" for x in my_list])
+```
+
+🔑 ONLY use keys that ACTUALLY EXIST in "CONTEXT KEYS AVAILABLE" above!
 """
         
         error_context = f"""

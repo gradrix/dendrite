@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 @tool(
     name="executeDataAnalysis",
-    description="Execute Python code for 100% accurate counting, filtering, and FORMATTING. CRITICAL: Use this for ANY counting task - AI models miscount, Python doesn't. For FORMATTING tasks: ALWAYS follow 3 steps: 1) Load data: loaded = load_data_reference(REF_ID), 2) Extract list: my_list = loaded.get('items') or loaded.get('data') or loaded, 3) Format: result = 'formatted string'. NEVER assume 'items' exists - always extract first! Must assign result to 'result' variable. Safe execution - no file I/O (except load_data_reference), no imports.",
+    description="Execute Python code for 100% accurate counting, filtering, and formatting. Use this for ANY counting or formatting task. Has helper functions to access context data easily: get_context_data(key), get_context_list(key), get_context_field(key, field). Must assign result to 'result' variable.",
     parameters=[
         {
             "name": "python_code",
             "type": "string",
-            "description": "Python code to execute. Has access to 'data' dict and load_data_reference() function. CRITICAL: NEVER use undefined variables! ALWAYS extract data first. STEP-BY-STEP PATTERN: (1) Get ref_id from data dict - LOOK at available keys in data to find the right one, e.g., ref_id = data['neuron_0_2']['_ref_id']; (2) Load: loaded = load_data_reference(ref_id); (3) Extract list: my_list = loaded.get('items') or loaded.get('data') or loaded; (4) Format: result = '\\n'.join([f\"{x['name']}: {x['distance']}m\" for x in my_list[:3]]). DO NOT use placeholder keys like 'neuron_0_X' - use ACTUAL keys from context. DO NOT call format() function - construct the result string yourself. Must assign final output to 'result' variable.",
+            "description": "Python code to execute. SIMPLE PATTERN: (1) Get data: my_list = get_context_list('neuron_0_2') - automatically handles disk/inline data; (2) Process: result = '\\n'.join([f\"{x['name']}: {x['distance']}m\" for x in my_list[:3]]). Available functions: get_context_data(key) - get any data, get_context_list(key) - always returns list, get_context_field(key, field) - get specific field. USE ACTUAL KEYS from context (e.g., 'neuron_0_2', 'dendrite_item_1_2'). Must assign to 'result' variable. DO NOT use load_data_reference or _ref_id - use helper functions instead!",
             "required": True
         }
     ],
@@ -97,6 +97,66 @@ def execute_data_analysis(python_code: str, **context) -> Dict[str, Any]:
                     'retry': False
                 }
         
+        # Helper functions for unified context access
+        def get_context_data(key):
+            """
+            Universal data accessor - handles all storage formats automatically.
+            Returns the actual data regardless of whether it's:
+            - Disk reference (_format: disk_reference)
+            - Result wrapper (has 'result' field)
+            - Direct data (dict, list, scalar)
+            """
+            value = context.get(key)
+            if value is None:
+                return None
+            
+            # Handle disk reference
+            if isinstance(value, dict) and value.get('_format') == 'disk_reference':
+                return load_data_reference(value['_ref_id'])
+            
+            # Handle result wrapper
+            if isinstance(value, dict) and 'result' in value and 'success' in value:
+                return value['result']
+            
+            # Return direct data
+            return value
+        
+        def get_context_list(key):
+            """
+            Get a list from context, handling all storage formats.
+            Always returns a list or None.
+            """
+            data = get_context_data(key)
+            if data is None:
+                return None
+            
+            # Already a list
+            if isinstance(data, list):
+                return data
+            
+            # Try common list field names
+            if isinstance(data, dict):
+                for field in ['items', 'entries', 'data', 'results', 'activities']:
+                    if field in data and isinstance(data[field], list):
+                        return data[field]
+            
+            # Single item - wrap in list
+            return [data]
+        
+        def get_context_field(key, field):
+            """
+            Get a specific field from context data.
+            Example: get_context_field('dendrite_item_1_2', 'name')
+            """
+            data = get_context_data(key)
+            if data is None:
+                return None
+            
+            if isinstance(data, dict):
+                return data.get(field)
+            
+            return None
+        
         # Prepare safe execution environment
         safe_globals = {
             '__builtins__': {
@@ -123,7 +183,10 @@ def execute_data_analysis(python_code: str, **context) -> Dict[str, Any]:
             },
             'data': context,
             'result': None,
-            'load_data_reference': load_data_reference,  # Allow loading disk references
+            # New unified access functions
+            'get_context_data': get_context_data,
+            'get_context_list': get_context_list,
+            'get_context_field': get_context_field,
         }
         
         # Execute the code with timeout
