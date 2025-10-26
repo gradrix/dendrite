@@ -9,12 +9,107 @@ import json
 import logging
 import signal
 import ast
+import re
 from typing import Any, Dict
 
 from agent.tool_registry import tool
 from agent.data_compaction import load_data_reference
 
 logger = logging.getLogger(__name__)
+
+
+def validate_code_structure(python_code: str, context: Dict) -> Dict[str, Any]:
+    """
+    Validate Python code against actual data structure in context.
+    Catches issues like accessing non-existent fields.
+    
+    Args:
+        python_code: The Python code to validate
+        context: The actual context data available
+        
+    Returns:
+        Dictionary with validation results and suggested fixes
+    """
+    issues = []
+    suggested_fix = python_code
+    
+    # Extract field accesses like x['field'] or x.get('field')
+    field_access_pattern = r"x\[(['\"])(\w+)\1\]"
+    field_accesses = re.findall(field_access_pattern, python_code)
+    
+    if not field_accesses:
+        return {'has_issues': False}
+    
+    # Extract which context key is being used
+    context_key_pattern = r"get_context_list\(['\"](\w+)['\"]"
+    context_keys = re.findall(context_key_pattern, python_code)
+    
+    if not context_keys:
+        return {'has_issues': False}
+    
+    # Get actual data structure from first context key
+    context_key = context_keys[0]
+    data = context.get(context_key)
+    
+    if not data:
+        return {'has_issues': False}
+    
+    # Load actual items to inspect structure
+    actual_items = None
+    if isinstance(data, dict):
+        if data.get('_format') == 'disk_reference':
+            try:
+                loaded = load_data_reference(data['_ref_id'])
+                if isinstance(loaded, list) and len(loaded) > 0:
+                    actual_items = loaded
+                elif isinstance(loaded, dict):
+                    for field in ['items', 'entries', 'data', 'results']:
+                        if field in loaded and isinstance(loaded[field], list) and len(loaded[field]) > 0:
+                            actual_items = loaded[field]
+                            break
+            except:
+                pass
+        elif 'items' in data and isinstance(data['items'], list) and len(data['items']) > 0:
+            actual_items = data['items']
+        elif 'result' in data and isinstance(data['result'], list) and len(data['result']) > 0:
+            actual_items = data['result']
+    elif isinstance(data, list) and len(data) > 0:
+        actual_items = data
+    
+    if not actual_items:
+        return {'has_issues': False}
+    
+    # Get first item to check structure
+    sample_item = actual_items[0]
+    if not isinstance(sample_item, dict):
+        return {'has_issues': False}
+    
+    available_fields = set(sample_item.keys())
+    
+    # Check each accessed field
+    accessed_fields = set(field[1] for field in field_accesses)
+    missing_fields = accessed_fields - available_fields
+    
+    if missing_fields:
+        issues.append(f"Fields {missing_fields} not found in data. Available: {list(available_fields)[:10]}")
+        
+        # Try to auto-fix by using .get() with defaults
+        for field in missing_fields:
+            # Replace x['field'] with x.get('field', None)
+            suggested_fix = re.sub(
+                rf"x\[['\"]"+ field + rf"['\"]\]",
+                f"x.get('{field}', None)",
+                suggested_fix
+            )
+        
+        return {
+            'has_issues': True,
+            'issues': issues,
+            'suggested_fix': suggested_fix,
+            'available_fields': list(available_fields)
+        }
+    
+    return {'has_issues': False}
 
 
 @tool(
@@ -189,6 +284,22 @@ def execute_data_analysis(python_code: str, **context) -> Dict[str, Any]:
             'get_context_field': get_context_field,
         }
         
+        # STEP 1: Validate code against actual data structure
+        # This catches issues like accessing x['athlete'] when 'athlete' doesn't exist
+        validation_result = validate_code_structure(python_code, context)
+        if validation_result.get('has_issues'):
+            logger.warning(f"⚠️ Code structure issues detected:")
+            for issue in validation_result.get('issues', []):
+                logger.warning(f"   - {issue}")
+            
+            # Try to auto-fix simple issues
+            fixed_code = validation_result.get('suggested_fix')
+            if fixed_code and fixed_code != python_code:
+                logger.info(f"🔧 Attempting auto-fix...")
+                logger.info(f"   Original: {python_code[:100]}...")
+                logger.info(f"   Fixed:    {fixed_code[:100]}...")
+                python_code = fixed_code
+        
         # Execute the code with timeout
         logger.info(f"🐍 Executing Python code for data analysis...")
         logger.debug(f"Code:\n{python_code}")
@@ -227,6 +338,44 @@ def execute_data_analysis(python_code: str, **context) -> Dict[str, Any]:
             'error': str(e),
             'retry': True,
             'hint': 'Code took too long - simplify the logic or reduce iterations'
+        }
+    except KeyError as e:
+        # Special handling for KeyError - very common with wrong field access
+        field_name = str(e).strip("'\"")
+        logger.error(f"❌ KeyError: Field '{field_name}' not found in data")
+        
+        # Try to identify which data structure caused the error
+        hint = f"Field '{field_name}' doesn't exist in the data. "
+        
+        # Get sample of available fields from context
+        available_fields = set()
+        for key, value in context.items():
+            if isinstance(value, dict) and not key.startswith('_'):
+                # Check if this is the data being accessed
+                if '_ref_id' in value:
+                    try:
+                        loaded = load_data_reference(value['_ref_id'])
+                        if isinstance(loaded, list) and len(loaded) > 0 and isinstance(loaded[0], dict):
+                            available_fields.update(loaded[0].keys())
+                            break
+                    except:
+                        pass
+                elif 'items' in value and isinstance(value['items'], list) and len(value['items']) > 0:
+                    if isinstance(value['items'][0], dict):
+                        available_fields.update(value['items'][0].keys())
+                        break
+        
+        if available_fields:
+            hint += f"Available fields: {list(available_fields)[:15]}. Use x.get('{field_name}', default) for optional fields."
+        else:
+            hint += "Check the data structure - the field you're trying to access doesn't exist."
+        
+        return {
+            'success': False,
+            'error': f"KeyError: '{field_name}'",
+            'retry': True,
+            'hint': hint,
+            'available_fields': list(available_fields) if available_fields else None
         }
     except Exception as e:
         logger.error(f"❌ Error executing Python code: {e}")
