@@ -159,6 +159,75 @@ def spawn_dendrites_from_context(
     indent = '  ' * parent_neuron.depth
     logger.info(f"{indent}│  ├─ Found {len(items)} items in context")
     
+    # NEW: LLM-driven data shaping before spawning
+    if ollama and len(items) > 5:  # Only for larger lists to avoid overhead
+        shape_prompt = f"""Given this goal: {parent_goal}
+And this list of {len(items)} items (sample: {json.dumps(items[:2], indent=2)})
+
+Do we need to filter, sort, or modify this list before processing each item?
+- If the goal asks for "first N" or "top N", suggest Python code to slice to N items
+- If sorting needed (e.g., by date), suggest code to sort
+- If filtering needed (e.g., by type), suggest code
+
+If no changes needed, output: NO
+
+If changes needed, output JSON:
+{{
+  "needs_shaping": true,
+  "python_code": "code to create new_list = ... from items"
+}}"""
+        
+        max_retries = 5
+        shaping_success = False
+        error_msg = ""
+        for attempt in range(max_retries):
+            current_prompt = shape_prompt
+            if error_msg:
+                current_prompt += f"\n\nPrevious attempt failed with error: {error_msg}\nGenerate corrected code."
+            response = ollama.generate(current_prompt, system="Decide if data needs shaping.", temperature=0.3)
+            try:
+                shape_info = json.loads(response)
+                if shape_info.get('needs_shaping'):
+                    # Spawn a neuron to execute the shaping code
+                    shaping_goal = "Shape the data using this code: " + shape_info['python_code']
+                    shaping_result = execute_goal_fn(shaping_goal, depth=parent_neuron.depth + 1)
+                    if shaping_result.get('success'):
+                        items = shaping_result.get('result', items)  # Assume result is the new list
+                        logger.info(f"{indent}│  ├─ Data shaped: now {len(items)} items (attempt {attempt+1})")
+                        shaping_success = True
+                        break
+                    else:
+                        error_msg = shaping_result.get('error', 'Unknown error')
+                else:
+                    break
+            except Exception as e:
+                error_msg = str(e)
+
+        if not shaping_success:
+            # Fallback: Use LLM to dynamically detect and generate slicing code
+            error_msg = ""
+            fallback_prompt = ""
+            for attempt in range(max_retries):
+                current_fallback_prompt = fallback_prompt
+                if error_msg:
+                    current_fallback_prompt += f"\n\nPrevious attempt failed with error: {error_msg}\nGenerate corrected code."
+                fallback_response = ollama.generate(current_fallback_prompt, system="Detect slicing needs.", temperature=0.3)
+                try:
+                    fallback_info = json.loads(fallback_response)
+                    if fallback_info.get('needs_slice'):
+                        shaping_goal = "Shape the data using this code: " + fallback_info['python_code']
+                        shaping_result = execute_goal_fn(shaping_goal, depth=parent_neuron.depth + 1)
+                        if shaping_result.get('success'):
+                            items = shaping_result.get('result', items)
+                            logger.info(f"{indent}│  ├─ Fallback LLM shaping: now {len(items)} items (attempt {attempt+1})")
+                            break
+                        else:
+                            error_msg = shaping_result.get('error', 'Unknown error')
+                    else:
+                        break
+                except Exception as e:
+                    error_msg = str(e)
+    
     # SAFETY CHECK 1: Limit number of dendrites
     if len(items) > MAX_DENDRITES_PER_SPAWN:
         logger.warning(f"{indent}│  ⚠️  Too many items ({len(items)}) - limiting to {MAX_DENDRITES_PER_SPAWN} to prevent infinite loop")

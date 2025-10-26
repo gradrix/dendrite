@@ -803,6 +803,8 @@ def micro_determine_params(
     goal_extracted_id = None
     goal_extracted_key = None
     
+    import re
+    
     # Pattern 1: "activity 12345" or "activity_id 12345"
     activity_id_match = re.search(r'activity[_ ]?(?:id[_ ]?)?(\d+)', neuron_desc, re.IGNORECASE)
     if activity_id_match:
@@ -862,6 +864,15 @@ def micro_determine_params(
             auto_mapped_params['data'] = data
             logger.info(f"   │  │  🔗 Auto-mapped data = dendrite_item")
     
+    # Special case: Detect "first N" or "top N" in description and set per_page accordingly
+    import re
+    limit_match = re.search(r'(?:first|top)\s*(\d+)', neuron_desc.lower())
+    param_names = [p['name'] for p in tool.parameters]
+    if limit_match and tool.name == 'getMyActivities' and 'per_page' in param_names:
+        limit = int(limit_match.group(1))
+        auto_mapped_params['per_page'] = limit
+        logger.info(f"   │  │  🔒 Set per_page={limit} based on '{limit_match.group(0)}' in task")
+
     # Build context info - show what we auto-mapped and what else is available
     context_info = ""
     if auto_mapped_params:
