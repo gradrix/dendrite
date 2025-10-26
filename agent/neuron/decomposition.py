@@ -51,7 +51,7 @@ Rules:
 - Format/display/report steps go at the end
 - NO DUPLICATE STEPS - each step must be different
 - IMPORTANT: If goal mentions a date period (like "January 2024", "September 2025", "last week"):
-  * First step: Convert date to timestamps (start and end)
+  * First step: Use getDateRangeTimestamps for the month/period (returns BOTH start AND end timestamps in one call)
   * Second step: Fetch data using those timestamps
   * Third step: Use executeDataAnalysis to count/filter (NO new fetch, work with existing data)
   * Fourth step: Format results
@@ -60,8 +60,8 @@ Rules:
   * Do NOT rely on AI counting - use Python for accurate counting
 
 Examples:
-- "How many runs in Jan 2024?" → (1) Convert Jan 2024 to timestamps, (2) Fetch all activities, (3) Use executeDataAnalysis to count where sport_type contains 'Run'
-- "Show my 3 rides from last month" → (1) Convert last month to timestamps, (2) Fetch all activities, (3) Use executeDataAnalysis to filter type=Ride and take first 3, (4) Format
+- "How many runs in Jan 2024?" → (1) Use getDateRangeTimestamps for January 2024, (2) Fetch all activities, (3) Use executeDataAnalysis to count where sport_type contains 'Run'
+- "Show my 3 rides from last month" → (1) Use getDateRangeTimestamps for last month, (2) Fetch all activities, (3) Use executeDataAnalysis to filter type=Ride and take first 3, (4) Format
 
 Output numbered list (1-4 steps, NO duplicates):"""
     
