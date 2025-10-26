@@ -762,6 +762,29 @@ def micro_determine_params(
         else:
             logger.warning(f"   │  │  ⚠️  Goal ID ({goal_extracted_id}) doesn't match dendrite item ID ({dendrite_item_id})!")
     
+    # SMART AUTO-EXTRACTION: Handle common parameter patterns with dendrite_item
+    # This avoids AI extraction failures for straightforward cases
+    if dendrite_item:
+        # Pattern 1: Tool needs 'entries' → wrap dendrite_item in array
+        if 'entries' in param_names and 'entries' not in auto_mapped_params:
+            # Create serializable copy of dendrite_item (remove internal fields)
+            entry = {k: v for k, v in dendrite_item.items() 
+                    if not k.startswith('_') and isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+            auto_mapped_params['entries'] = [entry]
+            logger.info(f"   │  │  🔗 Auto-mapped entries = [dendrite_item] (1 entry)")
+        
+        # Pattern 2: Tool needs 'key' and dendrite has 'id' → use id as key
+        if 'key' in param_names and 'key' not in auto_mapped_params and 'id' in dendrite_item:
+            auto_mapped_params['key'] = str(dendrite_item['id'])
+            logger.info(f"   │  │  🔗 Auto-mapped key = {dendrite_item['id']} from dendrite item")
+        
+        # Pattern 3: Tool needs 'data' → pass entire dendrite_item
+        if 'data' in param_names and 'data' not in auto_mapped_params:
+            data = {k: v for k, v in dendrite_item.items() 
+                   if not k.startswith('_') and isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+            auto_mapped_params['data'] = data
+            logger.info(f"   │  │  🔗 Auto-mapped data = dendrite_item")
+    
     # Build context info - show what we auto-mapped and what else is available
     context_info = ""
     if auto_mapped_params:
@@ -1041,6 +1064,23 @@ Output JSON only (no explanation):""".format(
                                     final_params['unix_timestamp'] = ctx_value['unix_timestamp']
                                     logger.debug(f"   │  │  ✓ Found unix_timestamp = {final_params['unix_timestamp']} from previous result")
                                     break
+                    
+                    # Special handling for mergeTimeseriesState 'entries'
+                    if tool.name == 'mergeTimeseriesState' and param_name == 'entries':
+                        if param_name not in final_params:
+                            # Strategy 1: Check if there's a result with a list
+                            for ctx_key, ctx_value in context.items():
+                                if isinstance(ctx_value, dict):
+                                    # Check for 'result' field with list
+                                    if 'result' in ctx_value and isinstance(ctx_value['result'], list):
+                                        final_params['entries'] = ctx_value['result']
+                                        logger.info(f"   │  │  🔗 Auto-extracted entries from {ctx_key}['result'] ({len(ctx_value['result'])} items)")
+                                        break
+                                    # Check for 'items' field with list
+                                    elif 'items' in ctx_value and isinstance(ctx_value['items'], list):
+                                        final_params['entries'] = ctx_value['items']
+                                        logger.info(f"   │  │  🔗 Auto-extracted entries from {ctx_key}['items'] ({len(ctx_value['items'])} items)")
+                                        break
             
             logger.debug(f"   │  │  📦 Final parameters: {final_params}")
             
