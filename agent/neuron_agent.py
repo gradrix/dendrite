@@ -182,6 +182,12 @@ If none relevant, output:
         logger.info(f"{'  ' * depth}🎯 Goal (depth={depth}): {goal}")
         self._log(f"[DEPTH {depth}] Goal: {goal}")
         
+        # CRITICAL: Clear context for new root-level goal execution
+        # This prevents context pollution from previous executions
+        if depth == 0:
+            logger.info(f"{'  ' * depth}🔄 Starting fresh context for new goal execution")
+            self.context = {}  # Fresh context for each root goal
+            
         # Store original goal in context for inter-neuron communication (only at root)
         if depth == 0:
             self.context['_original_goal'] = goal
