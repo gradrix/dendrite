@@ -789,25 +789,34 @@ def extract_code_template_from_result(dendrite_result: Dict, item_id: Any, inden
     if not dendrite_result.get('success'):
         return None, None, None
     
-    # Check if result contains neurons with executeDataAnalysis calls
+    # Check if result contains neurons (list of Neuron objects)
     neurons = dendrite_result.get('neurons', [])
-    for neuron in neurons:
-        if not isinstance(neuron, dict):
+    if not neurons:
+        return None, None, None
+    
+    # Look through neuron results for tool metadata
+    results = dendrite_result.get('results', [])
+    for result in results:
+        if not isinstance(result, dict):
             continue
         
-        tool_name = neuron.get('tool_used')
-        params = neuron.get('params', {})
-        
-        if tool_name == 'executeDataAnalysis' and 'python_code' in params:
-            code = params['python_code']
-            logger.info(f"{indent}│  │  💾 Cached code template from dendrite 1 for reuse")
-            logger.debug(f"{indent}│  │     Template: {code[:100]}...")
-            return code, tool_name, item_id
-        
-        # Also check getActivityKudos or similar tools with activity_id
-        if tool_name in ['getActivityKudos', 'getActivityParticipants'] and 'activity_id' in params:
-            # Store the tool call pattern
-            return params, tool_name, item_id
+        # Check for tool metadata added by execution.py
+        metadata = result.get('_tool_metadata')
+        if metadata:
+            tool_name = metadata.get('tool_name')
+            params = metadata.get('params', {})
+            
+            # Extract Python code template from executeDataAnalysis
+            if tool_name == 'executeDataAnalysis' and 'python_code' in params:
+                code = params['python_code']
+                logger.info(f"{indent}│  │  💾 Cached code template from dendrite 1 for reuse")
+                logger.debug(f"{indent}│  │     Template: {code[:100]}...")
+                return code, tool_name, item_id
+            
+            # Also cache other tool calls (like getActivityKudos)
+            elif tool_name in ['getActivityKudos', 'getActivityParticipants']:
+                logger.info(f"{indent}│  │  💾 Cached tool call pattern: {tool_name}")
+                return params, tool_name, item_id
     
     return None, None, None
 

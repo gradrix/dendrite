@@ -201,8 +201,23 @@ Provide a brief summary (2-3 sentences):"""
     # Truncate large detailed_results to keep logs readable
     truncated_results = truncate_large_results(results, max_size_kb=10)
     
+    # Check for failed neurons and add warning
+    failed_neurons = []
+    for i, (neuron, result) in enumerate(zip(neurons, results), 1):
+        if isinstance(result, dict):
+            if not result.get('success', True):  # Explicit failure
+                failed_neurons.append(i)
+            elif result.get('error'):  # Has error field
+                failed_neurons.append(i)
+    
+    summary_text = response_str.strip()
+    if failed_neurons:
+        warning = f"\n\n⚠️  Warning: Some processing steps failed (steps {', '.join(map(str, failed_neurons))}). Results may be incomplete or inaccurate."
+        summary_text += warning
+        logger.warning(f"Adding failure warning to response: {len(failed_neurons)} neurons failed")
+    
     return {
-        'summary': response_str.strip(),
+        'summary': summary_text,
         'detailed_results': truncated_results
     }
 

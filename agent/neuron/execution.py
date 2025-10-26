@@ -93,6 +93,32 @@ def execute_neuron(
                     "items": []
                 }
             else:
+                # ANTI-LOOP: Check if we already spawned for this context data
+                context_key = None
+                for key in context.keys():
+                    if not key.startswith('_') and context[key] is context_list:
+                        context_key = key
+                        break
+                
+                if not context_key:
+                    # Check if the list is a loaded reference
+                    for key, value in context.items():
+                        if not key.startswith('_') and isinstance(value, dict) and value.get('_ref_id'):
+                            # This is a disk reference, check if it was already spawned
+                            if context.get(f'_spawned_{key}'):
+                                logger.warning(f"{indent}│  ├─ ⚠️  Already spawned dendrites for '{key}', skipping to avoid loop")
+                                return {
+                                    "success": True,
+                                    "message": f"Already processed {key} items in previous iteration",
+                                    "count": 0
+                                }
+                            context_key = key
+                            break
+                
+                if context_key:
+                    context[f'_spawned_{context_key}'] = True
+                    logger.debug(f"{indent}│  │  Marked {context_key} as spawned")
+                
                 logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning (iterate over context)")
                 return spawn_from_context_fn(neuron, context_list, parent_goal)
         
@@ -165,6 +191,48 @@ Generate the complete python_code parameter now.""",
                     summarize_result_fn,
                     previous_error=enhanced_error  # Pass as error context
                 )
+                
+                # Check if retry ALSO failed to generate code
+                if isinstance(params, dict) and params.get('_needs_code_generation'):
+                    logger.error(f"{indent}│  ❌ Code generation retry also failed - AI unable to generate code")
+                    logger.warning(f"{indent}│  📝 Task may be too vague: '{task_desc}'")
+                    
+                    # Last resort: If task says "format/count/filter as needed", provide sensible default
+                    if any(word in task_desc.lower() for word in ['as needed', 'format the', 'count the', 'filter the']):
+                        logger.info(f"{indent}│  🔧 Providing fallback code for vague formatting task")
+                        
+                        # Find the most likely data source
+                        data_keys = [k for k in context.keys() if k.startswith('neuron_') and not k.startswith('_')]
+                        if data_keys:
+                            latest_key = data_keys[-1]  # Use most recent neuron result
+                            fallback_code = f"""# Fallback for vague task: {task_desc}
+my_data = get_context_data('{latest_key}')
+# Format as readable text
+if isinstance(my_data, dict) and 'athletes' in my_data:
+    athletes = my_data['athletes']
+    result = '\\n'.join([f"- {{a.get('name', 'Unknown')}}" for a in athletes])
+elif isinstance(my_data, list):
+    result = f"Found {{len(my_data)}} items"
+else:
+    result = str(my_data)"""
+                            
+                            params = {'python_code': fallback_code}
+                            logger.info(f"{indent}│  ✅ Using fallback code targeting '{latest_key}'")
+                        else:
+                            # Still no data - fail this attempt
+                            previous_error = {
+                                'error': 'Task too vague and no data available',
+                                'hint': 'Cannot generate code - task needs to be more specific'
+                            }
+                            continue
+                    else:
+                        # Set error for outer retry loop
+                        previous_error = {
+                            'error': 'AI failed to generate python_code after explicit instructions',
+                            'hint': 'The AI is unable to generate code for this task. Consider simplifying the task or using a different tool.'
+                        }
+                        continue  # Move to next attempt in outer retry loop
+                    
             except Exception as retry_error:
                 logger.error(f"{indent}│  ❌ Code generation retry failed: {retry_error}")
                 raise
@@ -354,6 +422,15 @@ Generate the complete python_code parameter now.""",
         if is_valid:
             neuron.validated = True
             logger.info(f"{indent}│  ╰─ ✅ Neuron complete")
+            
+            # TEMPLATE CACHING: Add tool metadata to result for code template extraction
+            if isinstance(result, dict) and tool and params:
+                if not result.get('_tool_metadata'):  # Don't overwrite existing metadata
+                    result['_tool_metadata'] = {
+                        'tool_name': tool.name,
+                        'params': params.copy() if isinstance(params, dict) else params
+                    }
+            
             return result
         else:
             logger.warning(f"{indent}│  │  ⚠️  Validation failed, retrying")
