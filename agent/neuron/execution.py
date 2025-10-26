@@ -94,6 +94,9 @@ def execute_neuron(
         
         logger.info(f"{indent}│  │  No spawning needed")
     
+    # Track previous errors for retry feedback
+    previous_error = None
+    
     for attempt in range(1, max_retries + 1):
         logger.info(f"{indent}│  ├─ Attempt {attempt}/{max_retries}")
         
@@ -105,9 +108,9 @@ def execute_neuron(
         
         logger.info(f"{indent}│  ├─ Tool: {tool.name}")
         
-        # Step 2: Determine parameters
+        # Step 2: Determine parameters (with previous error context if retrying)
         try:
-            params = micro_determine_params(neuron.description, tool, context, ollama, summarize_result_fn)
+            params = micro_determine_params(neuron.description, tool, context, ollama, summarize_result_fn, previous_error=previous_error)
         except Exception as param_error:
             import traceback
             logger.error(f"{indent}│  ❌ Parameter determination failed: {param_error}")
@@ -154,6 +157,12 @@ def execute_neuron(
                 
                 if should_retry and attempt < max_retries:
                     logger.info(f"{indent}│  │  🔄 Retrying with corrected code...")
+                    # Store error context for next attempt
+                    previous_error = {
+                        'error': error_msg,
+                        'hint': hint,
+                        'failed_params': params if 'params' in locals() else None
+                    }
                     # Re-validate and regenerate code
                     continue
                 elif not should_retry:
@@ -539,7 +548,8 @@ def micro_determine_params(
     tool: Any,
     context: Dict,
     ollama: Any,
-    summarize_result_fn: Any
+    summarize_result_fn: Any,
+    previous_error: Optional[Dict] = None
 ) -> Dict[str, Any]:
     """
     Micro-prompt: What parameters?
@@ -550,6 +560,7 @@ def micro_determine_params(
         context: Current execution context
         ollama: Ollama client
         summarize_result_fn: Function to summarize results
+        previous_error: Error from previous attempt (if retrying)
         
     Returns:
         Parameter dictionary
@@ -652,8 +663,28 @@ def micro_determine_params(
         context_info += "\n  - For disk data (📦), use: data['neuron_X_Y']['_ref_id'] then load_data_reference(...)"
         context_info += "\n  - NEVER try to load_data_reference on scalar results - they have NO _ref_id!"
     
-    prompt = """Extract parameters from the task description and available data.
+    # Add previous error context if retrying
+    error_context = ""
+    if previous_error:
+        error_context = f"""
 
+⚠️ PREVIOUS ATTEMPT FAILED:
+Error: {previous_error.get('error', 'Unknown')}
+Hint: {previous_error.get('hint', 'N/A')}
+
+IMPORTANT - Learn from this failure:
+- The previous code had errors that must be fixed
+- Pay special attention to the hint provided
+- DO NOT repeat the same mistake
+- If error mentions 'items' not defined, you MUST extract items from data first like:
+  loaded = load_data_reference(data['neuron_X_Y']['_ref_id'])
+  items = loaded.get('items') or loaded.get('data') or loaded.get('entries')
+- Then use 'items' in your code
+
+"""
+    
+    prompt = """Extract parameters from the task description and available data.
+{error_context}
 Task: {task}
 Tool: {tool_name}
 
@@ -698,6 +729,7 @@ EXAMPLES:
   → Output: {{}} or {{"per_page": 3}} (depending on tool params)
 
 Output JSON only (no explanation):""".format(
+        error_context=error_context,
         task=neuron_desc,
         tool_name=tool.name,
         param_info=param_info,
