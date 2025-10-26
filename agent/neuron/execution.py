@@ -82,9 +82,19 @@ def execute_neuron(
         
         # Type 1: Iteration spawning ("for each item")
         context_list = find_context_list_fn(neuron.description, context)
-        if context_list:
-            logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning (iterate over context)")
-            return spawn_from_context_fn(neuron, context_list, parent_goal)
+        if context_list is not None:
+            if len(context_list) == 0:
+                # Description says "for each" but no items match the filter
+                logger.info(f"{indent}│  ├─ ✅ No items to iterate over (filter matched 0 items)")
+                return {
+                    "success": True,
+                    "message": "No items matched the iteration criteria",
+                    "count": 0,
+                    "items": []
+                }
+            else:
+                logger.info(f"{indent}│  ├─ 🌿 Pre-execution spawning (iterate over context)")
+                return spawn_from_context_fn(neuron, context_list, parent_goal)
         
         # Type 2: Multi-step spawning ("start AND end", "both X and Y")
         subtasks = detect_multi_step_fn(neuron.description, context, tools)
