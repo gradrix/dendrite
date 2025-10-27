@@ -7,4 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Set PYTHONPATH so tests can import neural_engine
+ENV PYTHONPATH=/app
+
 CMD ["pytest"]

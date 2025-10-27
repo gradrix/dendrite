@@ -124,58 +124,48 @@ Complete guides to get you started:
 ## Prerequisites
 
 - Docker Engine 20.10+ 
-- Docker Compose 2.0+ (optional, for docker-compose usage)
+- Docker Compose 2.0+ (optional, for docker compose usage)
 - At least 8GB RAM recommended for 8B models
 - (Optional) NVIDIA GPU with nvidia-docker for GPU acceleration
 
 ## Quick Start
 
-### Method 1: Using Docker Compose (Recommended)
+### One-Command Setup
 
-1. **Clone and configure**:
-   ```bash
-   # Copy example configuration
-   cp .env.example .env
-   
-   # Edit configuration if needed
-   nano .env
-   ```
+```bash
+# Initial setup (first time only)
+./scripts/setup.sh
 
-2. **Start everything**:
-   ```bash
-   docker-compose up -d
-   ```
+# Start the neural engine
+./scripts/start.sh
 
-   This will:
-   - Start the Ollama container
-   - Wait for it to be healthy
-   - Run the setup script to pull the default model
-   - Make the API available at `http://localhost:11434`
+# Run a goal
+./scripts/run.sh "How many running activities did I have in September?"
 
-3. **Check status**:
-   ```bash
-   docker-compose logs -f ollama-setup
-   ```
+# Run tests
+./scripts/test.sh
 
-### Method 2: Using Shell Script Directly
+# Stop everything
+./scripts/stop.sh
+```
 
-1. **Make scripts executable**:
-   ```bash
-   chmod +x setup-ollama.sh stop-ollama.sh test-ollama.sh list-models.sh
-   ```
+### What This Does
 
-2. **Run setup**:
-   ```bash
-   ./setup-ollama.sh
-   ```
+The setup script will:
+- Start Redis, Ollama, and the application container
+- Wait for all services to be healthy
+- Pull the default LLM model (llama3.1:8b)
+- Verify everything is working
 
-   This will:
-   - Check if Docker is available
-   - Create a Docker network
-   - Start the Ollama container (if not running)
-   - Wait for the API to be ready
-   - Pull the default model (llama3.1:8b)
-   - Display status and usage information
+### Available Scripts
+
+See [`scripts/README.md`](scripts/README.md) for complete documentation, including:
+- 🧪 Testing scripts (`test.sh`, `test-watch.sh`, `test-local.sh`)
+- 🔧 Development mode (`dev.sh`)
+- 🐚 Shell access (`shell.sh`)
+- 📋 Log viewing (`logs.sh`)
+- 🏥 Health checks (`health.sh`)
+- 🔄 Reset and cleanup (`reset.sh`)
 
 **→ Next Steps:** See **[Complete Setup Guide](docs/SETUP.md)** for Strava authentication, GPU setup, and model selection.
 
@@ -815,7 +805,7 @@ depends_on:
 **Benefit**: Works identically on any system with Docker.
 
 #### 2. Why Separate Setup Script?
-**Problem**: docker-compose alone can't conditionally pull models or wait for API readiness.
+**Problem**: docker compose alone can't conditionally pull models or wait for API readiness.
 **Solution**: Setup container runs after Ollama is healthy.
 **Benefit**: Fully automated, no manual intervention needed.
 
@@ -838,9 +828,9 @@ depends_on:
 
 #### Initial Setup Flow
 ```
-User runs: docker-compose up -d
+User runs: docker compose up -d
     ↓
-docker-compose creates network
+docker compose creates network
     ↓
 Starts ollama container
     ↓

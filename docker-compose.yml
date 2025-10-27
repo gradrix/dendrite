@@ -32,12 +32,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
+    volumes:
+      - .:/app  # Mount source for live debugging
     environment:
       - REDIS_HOST=redis
       - OLLAMA_HOST=http://ollama:11434
     depends_on:
       - redis
       - ollama
+    # Expose debugpy port for remote debugging
+    ports:
+      - "5678:5678"
 
 volumes:
   ai_tools:
