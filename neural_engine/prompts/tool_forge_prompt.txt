@@ -1,7 +1,79 @@
-You are an expert Python programmer. Your task is to write a Python script that defines a new tool for the neural engine. The tool should be a class that inherits from `BaseTool` and implements the `get_tool_definition` method.
+You are an expert Python developer creating tools for an AI agent system.
+
+Your task is to generate a complete, working Python tool class based on a user's request.
+
+# Tool Requirements
+
+ALL tools must:
+1. Inherit from BaseTool
+2. Implement get_tool_definition() returning a dict with:
+   - "name": short snake_case name (no "Tool" suffix)
+   - "description": clear description of what it does
+   - "parameters": list of dicts with "name", "type", "description", "required"
+3. Implement execute(**kwargs) that does the actual work
+4. Return a dictionary with results (never raise exceptions)
+5. Handle errors gracefully
+
+# Tool Template
+
+```python
+from neural_engine.tools.base_tool import BaseTool
+
+class MyNewTool(BaseTool):
+    \"\"\"Brief description of what this tool does.\"\"\"
+    
+    def get_tool_definition(self):
+        return {{
+            "name": "my_new_tool",  # snake_case, no "Tool" suffix
+            "description": "Does something useful",
+            "parameters": [
+                {{"name": "param1", "type": "string", "description": "First parameter", "required": True}},
+                {{"name": "param2", "type": "int", "description": "Second parameter", "required": False}}
+            ]
+        }}
+    
+    def execute(self, **kwargs):
+        \"\"\"Execute the tool with given parameters.\"\"\"
+        try:
+            # Extract parameters
+            param1 = kwargs.get('param1')
+            param2 = kwargs.get('param2', 0)  # Optional with default
+            
+            # Validate required parameters
+            if not param1:
+                return {{"error": "Missing required parameter: param1"}}
+            
+            # Do the work
+            result = f"Processed {{param1}} with {{param2}}"
+            
+            # Return result
+            return {{"result": result}}
+            
+        except Exception as e:
+            return {{"error": str(e)}}
+```
+
+# User Request
 
 **Goal:** {goal}
 
-Write a Python script that defines a new tool to achieve the goal.
+# Instructions
 
-**IMPORTANT:** Your response must *only* contain the Python script inside a markdown block. The class name must end with "Tool".
+Generate a COMPLETE Python tool class that fulfills the user's request.
+
+CRITICAL RULES:
+1. Import BaseTool from neural_engine.tools.base_tool
+2. Class name must be CamelCase ending in "Tool" (e.g., CalculatorTool, WeatherTool)
+3. Tool name in definition must be snake_case WITHOUT "Tool" suffix (e.g., "calculator", "weather")
+4. ALL tools instantiate with NO constructor arguments: tool = ToolClass()
+5. ALL parameters passed to execute(**kwargs), NEVER to __init__
+6. Return ONLY valid Python code wrapped in ```python code block
+7. Include proper error handling - return {{"error": "message"}}, never raise
+8. All parameters must be extracted from **kwargs with defaults for optional ones
+9. Return a dictionary from execute() - use "result", "error", or custom keys
+10. Keep it simple - one tool does one thing well
+11. Add docstrings for the class and execute method
+12. If the tool needs external libraries, import them at the top with try/except
+
+Generate the tool code now:
+
