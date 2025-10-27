@@ -46,9 +46,9 @@ class ToolRegistry:
                     if tool_name in self.tools:
                         logger.warning(f"Duplicate tool name '{tool_name}' found in {filepath}. Overwriting existing tool.")
 
-                    # Add module_name and class_name to tool definition for code generation
-                    tool_def["module_name"] = module_name
-                    tool_def["class_name"] = name
+                    # Store module_name and class_name on tool instance for code generation
+                    tool_instance._module_name = module_name
+                    tool_instance._class_name = name
                     
                     self.tools[tool_name] = tool_instance
                     logger.info(f"Loaded tool: '{tool_name}' from {filepath}")
@@ -61,7 +61,10 @@ class ToolRegistry:
             logger.error(f"Failed to load tool from {filepath}: {e}")
 
     def _get_module_name(self, filepath):
-        return filepath.replace("/", ".").replace(".py", "")
+        # Remove .py extension first, then replace / with .
+        if filepath.endswith(".py"):
+            filepath = filepath[:-3]
+        return filepath.replace("/", ".")
 
     def get_tool(self, tool_key):
         return self.tools.get(tool_key)
@@ -70,4 +73,13 @@ class ToolRegistry:
         return self.tools
     
     def get_all_tool_definitions(self):
-        return {name: tool.get_tool_definition() for name, tool in self.tools.items()}
+        definitions = {}
+        for name, tool in self.tools.items():
+            tool_def = tool.get_tool_definition()
+            # Add stored metadata
+            if hasattr(tool, '_module_name'):
+                tool_def["module_name"] = tool._module_name
+            if hasattr(tool, '_class_name'):
+                tool_def["class_name"] = tool._class_name
+            definitions[name] = tool_def
+        return definitions

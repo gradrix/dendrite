@@ -26,15 +26,21 @@ def redis_client():
 
 
 @pytest.fixture
-def message_bus(redis_client):
+def message_bus():
     """Provide a MessageBus for testing."""
-    return MessageBus(redis_client)
+    import os
+    os.environ['REDIS_HOST'] = 'redis'
+    return MessageBus()
 
 
 @pytest.fixture
 def ollama_client():
     """Provide an OllamaClient for testing."""
-    return OllamaClient(host='http://ollama:11434')
+    import os
+    # Set environment variables for Docker container
+    os.environ['OLLAMA_HOST'] = 'http://ollama:11434'
+    os.environ['OLLAMA_MODEL'] = 'mistral'
+    return OllamaClient()
 
 
 @pytest.fixture
@@ -94,15 +100,11 @@ class TestPhase0IntentClassification:
         
         result = intent_classifier.process(goal_id, goal)
         
-        # Verify message was stored
-        messages = message_bus.get_messages(goal_id)
-        assert len(messages) > 0
-        
-        # Find the intent message
-        intent_message = next((m for m in messages if m.get('type') == 'intent'), None)
-        assert intent_message is not None
-        assert 'data' in intent_message
-        print(f"✓ Intent stored in message bus: {intent_message['data']}")
+        # Verify message was stored by retrieving it
+        stored_intent = message_bus.get_message(goal_id, "intent")
+        assert stored_intent is not None
+        assert stored_intent in ["generative", "tool_use"]
+        print(f"✓ Intent stored in message bus: {stored_intent}")
     
     def test_ollama_client_connectivity(self, ollama_client):
         """Test: Ollama client can connect and generate."""
