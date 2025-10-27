@@ -24,7 +24,9 @@ class ToolSelectorNeuron(BaseNeuron):
         if not tool:
             raise ValueError(f"Tool '{selected_tool_name}' not found in registry.")
 
-        tool_info = tool.get_tool_definition()
+        # Get enriched tool definition from registry (includes module_name and class_name)
+        tool_info = tool_definitions[selected_tool_name]
+        
         result_data = {
             "goal": goal,
             "selected_tool_name": selected_tool_name,

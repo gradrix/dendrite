@@ -6,15 +6,39 @@ The user's goal is:
 ---
 
 The selected tool to use is: `{tool_name}`
-The tool's module is: `neural_engine.tools.{module_name}`
-The tool's class is: `{class_name}`
+The tool's module is: `{tool_module}`
+The tool's class is: `{tool_class}`
+
+The tool's definition (with parameters):
+---
+{tool_definition}
+---
 
 You must write a Python script that:
-1. Imports `{class_name}` from `neural_engine.tools.{module_name}`.
-2. Instantiates the `{class_name}`.
-3. Calls the tool's `execute` method.
-4. Passes the result of the `execute` method to the `sandbox.set_result()` function.
+1. Imports `{tool_class}` from `{tool_module}`.
+2. Instantiates the `{tool_class}` with NO arguments: `tool = {tool_class}()`
+3. Analyzes the user's goal and extracts appropriate values for the tool's parameters.
+4. Calls the tool's `execute()` method and CAPTURE THE RETURN VALUE: `result = tool.execute(...)`
+5. Passes the result to the `sandbox.set_result()` function.
 
-**Important:** The `sandbox` object is already available in the global scope. Do NOT try to `import sandbox`.
+**Important Rules:**
+- The `sandbox` object is already available in the global scope. Do NOT try to `import sandbox`.
+- ALL tools are instantiated with NO constructor arguments: `tool = ToolClass()`
+- Parameters are passed to the `execute()` method, NOT the constructor.
+- The `execute()` method RETURNS a value - you must capture it: `result = tool.execute(...)`
+- Pass the RETURN VALUE from execute() to sandbox.set_result(), NOT any tool attribute.
+- Only pass parameters that are specified in the tool's definition.
+- If the goal doesn't provide a value for an optional parameter, don't pass it.
+- Extract parameter values intelligently from the goal (e.g., "my activities from last week" → after_unix timestamp).
+- If the tool has no parameters, call `execute()` with no arguments.
 
-Do not write any other code. Only provide the Python script itself, without any explanations.
+**Example Structure:**
+```python
+from {tool_module} import {tool_class}
+
+tool = {tool_class}()
+result = tool.execute(param1=value1, param2=value2)
+sandbox.set_result(result)
+```
+
+**Output only the Python code, no explanations or markdown.**

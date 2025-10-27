@@ -4,8 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
-      - .:/app
-      - ai_tools:/app/neural_engine/tools
+      - .:/app  # Mount entire source including tools
       - kv_store:/app/var
     environment:
       - REDIS_HOST=redis
@@ -52,6 +51,5 @@ services:
       - "5678:5678"
 
 volumes:
-  ai_tools:
   ollama_data:
   kv_store:
