@@ -41,7 +41,7 @@ The agent is part of a larger ecosystem that allows it to monitor its own perfor
 
 ## Development Plan
 
--   [ ] **Implement the `ToolRegistry`:** Create the initial version of the `ToolRegistry` that can scan the `tools/` directory, and dynamically load tool files. This is the immediate next step to unblock testing.
+-   [x] **Implement the `ToolRegistry`:** Create the initial version of the `ToolRegistry` that can scan the `tools/` directory, and dynamically load tool files. This is the immediate next step to unblock testing.
 -   [ ] **Implement a "Smart Tool":** Create a sample tool (e.g., `strava_tool.py`) that demonstrates state management, raises `AuthenticationRequiredError` when unconfigured, and includes self-healing token refresh logic.
 -   [ ] **Implement Orchestrator's Exception Handling:** Update the `Orchestrator` to catch `AuthenticationRequiredError` and launch the dependency resolution sub-pipeline.
 -   [ ] **Implement the Persistent `PromptRegistry`:** Build the registry to load, cache, and provide prompts to all neurons.
