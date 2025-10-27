@@ -20,13 +20,16 @@ class Orchestrator:
         intent = intent_data["intent"]
 
         if intent == "generative":
-            return self.neuron_registry["generative"].process(goal_id, intent_data)
+            return self._execute_generative_pipeline(goal_id, intent_data, depth)
 
         elif intent == "tool_use":
             return self._execute_tool_use_pipeline(goal_id, intent_data, depth)
 
         else:
             return {"error": f"Unknown or unsupported intent: {intent}"}
+
+    def _execute_generative_pipeline(self, goal_id, data, depth):
+        return self.neuron_registry["generative"].process(goal_id, data)
 
     def _execute_tool_use_pipeline(self, goal_id, data, depth):
         # 1. Select the tool

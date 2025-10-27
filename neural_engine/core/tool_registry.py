@@ -1,5 +1,5 @@
 import os
-import importlib.util
+import importlib
 import inspect
 import logging
 from neural_engine.tools.base_tool import BaseTool
@@ -28,9 +28,9 @@ class ToolRegistry:
         module_name = self._get_module_name(filepath)
 
         try:
-            spec = importlib.util.spec_from_file_location(module_name, filepath)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            # Use importlib.import_module instead of spec_from_file_location
+            # This ensures relative imports work correctly
+            module = importlib.import_module(module_name)
 
             found_tool = False
             for name, obj in inspect.getmembers(module):
@@ -46,6 +46,10 @@ class ToolRegistry:
                     if tool_name in self.tools:
                         logger.warning(f"Duplicate tool name '{tool_name}' found in {filepath}. Overwriting existing tool.")
 
+                    # Add module_name and class_name to tool definition for code generation
+                    tool_def["module_name"] = module_name
+                    tool_def["class_name"] = name
+                    
                     self.tools[tool_name] = tool_instance
                     logger.info(f"Loaded tool: '{tool_name}' from {filepath}")
                     found_tool = True
@@ -64,3 +68,6 @@ class ToolRegistry:
 
     def get_all_tools(self):
         return self.tools
+    
+    def get_all_tool_definitions(self):
+        return {name: tool.get_tool_definition() for name, tool in self.tools.items()}
