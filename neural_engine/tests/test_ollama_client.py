@@ -13,7 +13,7 @@ class TestOllamaClient(unittest.TestCase):
         # Arrange
         mock_instance = mock_ollama_client.return_value
         # Simulate the model being present in the local list
-        mock_instance.list.return_value = {"models": [{"name": "mistral:latest"}]}
+        mock_instance.list.return_value = {"models": [{"model": "mistral:latest"}]}
 
         # Act
         with patch.dict(os.environ, {"OLLAMA_MODEL": "mistral"}):

@@ -20,10 +20,11 @@ class ToolSelectorNeuron(BaseNeuron):
         response_json = json.loads(response['response'].strip())
         selected_tool_name = response_json["tool_name"]
 
-        tool_info = self.tool_registry.get_tool_info(selected_tool_name)
-        if not tool_info:
+        tool = self.tool_registry.get_tool(selected_tool_name)
+        if not tool:
             raise ValueError(f"Tool '{selected_tool_name}' not found in registry.")
 
+        tool_info = tool.get_tool_definition()
         result_data = {
             "goal": goal,
             "selected_tool_name": selected_tool_name,

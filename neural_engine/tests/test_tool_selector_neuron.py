@@ -33,7 +33,7 @@ class TestToolSelectorNeuron(unittest.TestCase):
 
         # Mock the tool registry to return info for the selected tool
         tool_info = {"module_name": "time_tool", "class_name": "TimeTool"}
-        self.mock_tool_registry.get_tool_info.return_value = tool_info
+        self.mock_tool_registry.get_tool_definition.return_value = tool_info
 
         # Patch the _load_prompt method
         with patch.object(self.tool_selector_neuron, '_load_prompt', return_value=prompt_template):
@@ -44,7 +44,7 @@ class TestToolSelectorNeuron(unittest.TestCase):
             # Assert
             # Check that the tool registry was called
             self.mock_tool_registry.get_all_tool_definitions.assert_called_once()
-            self.mock_tool_registry.get_tool_info.assert_called_once_with("get_time_tool")
+            self.mock_tool_registry.get_tool_definition.assert_called_once_with("get_time_tool")
 
             # Check that the LLM was called with the correct prompt
             self.mock_ollama_client.generate.assert_called_once()

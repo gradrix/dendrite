@@ -14,7 +14,7 @@ class OllamaClient:
         """
         try:
             local_models = self.client.list()["models"]
-            model_names = [model["name"] for model in local_models]
+            model_names = [model["model"] for model in local_models]
 
             # The API might return the model name with a default tag, e.g., 'mistral:latest'
             # We should check if our model name is a prefix of any of the available models.
