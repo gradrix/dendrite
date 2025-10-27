@@ -2,12 +2,10 @@ from .base_tool import BaseTool
 
 class PythonScriptTool(BaseTool):
     def execute_script(self, script):
-        """
-        Executes a Python script.
-        NOTE: This is a dangerous operation and should be used with caution in a sandboxed environment.
-        """
         try:
-            exec(script)
+            # WARNING: This is a security risk. In a real-world application,
+            # this should be executed in a sandboxed environment.
+            exec(script, globals())
             return {"status": "success"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -19,14 +17,8 @@ class PythonScriptTool(BaseTool):
             "functions": [
                 {
                     "name": "execute_script",
-                    "description": "Execute a given Python script.",
-                    "parameters": [
-                        {
-                            "name": "script",
-                            "type": "string",
-                            "description": "The Python script to execute.",
-                        }
-                    ],
+                    "description": "Execute a Python script in the current environment.",
+                    "parameters": [{"name": "script", "type": "string"}],
                 }
             ],
         }

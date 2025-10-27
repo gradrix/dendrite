@@ -3,9 +3,6 @@ import requests
 
 class GenericRequestTool(BaseTool):
     def make_request(self, method, url, params=None, data=None, headers=None):
-        """
-        Makes a generic HTTP request.
-        """
         try:
             response = requests.request(method, url, params=params, data=data, headers=headers)
             response.raise_for_status()
@@ -22,31 +19,11 @@ class GenericRequestTool(BaseTool):
                     "name": "make_request",
                     "description": "Make an HTTP request.",
                     "parameters": [
-                        {
-                            "name": "method",
-                            "type": "string",
-                            "description": "The HTTP method (e.g., GET, POST).",
-                        },
-                        {
-                            "name": "url",
-                            "type": "string",
-                            "description": "The URL to make the request to.",
-                        },
-                        {
-                            "name": "params",
-                            "type": "dict",
-                            "description": "URL parameters.",
-                        },
-                        {
-                            "name": "data",
-                            "type": "dict",
-                            "description": "Request body.",
-                        },
-                        {
-                            "name": "headers",
-                            "type": "dict",
-                            "description": "Request headers.",
-                        },
+                        {"name": "method", "type": "string"},
+                        {"name": "url", "type": "string"},
+                        {"name": "params", "type": "dict"},
+                        {"name": "data", "type": "dict"},
+                        {"name": "headers", "type": "dict"},
                     ],
                 }
             ],

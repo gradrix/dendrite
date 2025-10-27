@@ -3,37 +3,41 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    network_mode: "host"
     volumes:
       - .:/app
+      - ai_tools:/app/neural_engine/tools
     environment:
-      - REDIS_HOST=localhost
-      - OLLAMA_HOST=http://localhost:11434
+      - REDIS_HOST=redis
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
 
   redis:
     image: redis:latest
-    network_mode: "host"
+    ports:
+      - "6379:6379"
 
   ollama:
     image: ollama/ollama:latest
-    network_mode: "host"
+    ports:
+      - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-    command: >
-      sh -c "
-        ollama serve &
-        sleep 5 &&
-        ollama pull mistral
-      "
 
   tests:
     build:
       context: .
       dockerfile: Dockerfile.test
-    network_mode: "host"
     environment:
-      - REDIS_HOST=localhost
-      - OLLAMA_HOST=http://localhost:11434
+      - REDIS_HOST=redis
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      - redis
+      - ollama
 
 volumes:
+  ai_tools:
   ollama_data:

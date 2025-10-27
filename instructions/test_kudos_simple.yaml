@@ -1,5 +1,0 @@
-goal: |
-  Give kudos to Strava activity ID 16249155023
-
-context:
-  test_note: "Testing if already-given kudos is treated as success (idempotent operation)"

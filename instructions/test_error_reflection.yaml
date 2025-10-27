@@ -1,6 +1,0 @@
-goal: |
-  Give kudos to activity ID 99999999999
-
-context:
-  test_note: "This is an intentional test of error reflection. ID 99999999999 does not exist - it should trigger a 404 error."
-  expected_behavior: "Agent should detect 404 error, reflect on the problem, realize the ID is invalid/hallucinated, and report this intelligently instead of infinite retries."

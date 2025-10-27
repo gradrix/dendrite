@@ -1,0 +1,7 @@
+You are an expert Python programmer. Your task is to write a Python script that defines a new tool for the neural engine. The tool should be a class that inherits from `BaseTool` and implements the `get_tool_definition` method.
+
+**Goal:** {goal}
+
+Write a Python script that defines a new tool to achieve the goal.
+
+**IMPORTANT:** Your response must *only* contain the Python script inside a markdown block. The class name must end with "Tool".
