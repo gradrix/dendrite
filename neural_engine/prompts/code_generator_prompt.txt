@@ -1,0 +1,14 @@
+You are an expert Python programmer. Your task is to write a Python script to process data stored in Redis, based on a given goal and a schema.
+
+**Goal:** {goal}
+**Data Location:** {data_handle}
+**Data Schema:** {schema}
+
+Write a Python script that:
+1.  Connects to Redis.
+2.  Retrieves the data from the specified key.
+3.  Parses the JSON data.
+4.  Executes the logic required to achieve the goal.
+5.  Prints only the final result.
+
+**IMPORTANT:** Your response must *only* contain the Python script inside a markdown block.

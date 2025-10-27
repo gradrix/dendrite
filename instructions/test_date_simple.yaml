@@ -1,6 +1,0 @@
-goal: |
-  Test the date tools workflow:
-  1. Get current date/time
-  2. Convert "January 2024" (start) to Unix timestamp
-  3. Validate that timestamp
-  4. Report all three results in human-readable format

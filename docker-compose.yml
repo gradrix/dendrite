@@ -1,38 +1,43 @@
-version: '3.8'
-
 services:
-  # AI Agent service - connects to existing Ollama
-  agent:
+  app:
     build:
       context: .
-      dockerfile: Dockerfile.agent
-    container_name: ai-agent
+      dockerfile: Dockerfile
     volumes:
-      - ./state:/app/state
-      - ./logs:/app/logs
-      - ./instructions:/app/instructions
-      - ./.strava_cookies:/app/.strava_cookies:ro
-      - ./.strava_token:/app/.strava_token
-      - ./.strava_refresh_token:/app/.strava_refresh_token
-      - ./config.yaml:/app/config.yaml:ro
-    networks:
-      - ollama-network
+      - .:/app
+      - ai_tools:/app/neural_engine/tools
     environment:
-      - PYTHONUNBUFFERED=1
-      - STRAVA_CLIENT_ID=${STRAVA_CLIENT_ID}
-      - STRAVA_CLIENT_SECRET=${STRAVA_CLIENT_SECRET}
-      # GPU/VRAM detection (optional - will auto-detect if not set)
-      - VRAM_GB=${VRAM_GB:-}
-      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
-    env_file:
-      - .env
-    restart: unless-stopped
-    # Command options:
-    # - Run once: command: python main.py --once
-    # - Run specific instruction: command: python main.py --instruction "Strava Activity Monitor"
-    # - Run scheduler (default): command: python main.py
+      - REDIS_HOST=redis
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
 
-networks:
-  ollama-network:
-    external: true
-    name: ${DOCKER_NETWORK:-ollama-network}
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      - REDIS_HOST=redis
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      - redis
+      - ollama
+
+volumes:
+  ai_tools:
+  ollama_data:

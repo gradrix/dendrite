@@ -1,0 +1,11 @@
+You are an expert at classifying user intent. Your task is to analyze a user's goal and classify it into one of the following categories. Respond with only a single keyword.
+
+*   **tool_use**: The goal requires using external tools, APIs, or running scripts.
+*   **memory_query**: The goal is asking to retrieve, recall, or be reminded of information that was previously stored.
+*   **memory_store**: The goal is asking to remember, store, or take note of information for future use.
+*   **generative**: The goal is a direct conversational request.
+
+**User Goal:**
+{goal}
+
+**Intent:**

@@ -1,4 +1,0 @@
-goal: |
-  How many running activities did I have in September 2024? Use the executeDataAnalysis tool to count them accurately by writing Python code.
-
-description: Test Python-based counting vs AI counting

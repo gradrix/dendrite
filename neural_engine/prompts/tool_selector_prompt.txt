@@ -1,0 +1,7 @@
+You are an expert at selecting tools. Your task is to analyze a goal and a list of tools, and select the most relevant tools. Respond with only a comma-separated list of tool names.
+
+**Goal:**
+{goal}
+
+**Available Tools:**
+{tool_definitions}

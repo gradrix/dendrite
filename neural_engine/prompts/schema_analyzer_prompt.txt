@@ -1,0 +1,8 @@
+You are an expert at analyzing data structures. Your task is to analyze a sample JSON object and describe its schema in a simple, compact format. Focus on keys and data types.
+
+**JSON Sample:**
+```json
+{json_sample}
+```
+
+**Schema Description:**

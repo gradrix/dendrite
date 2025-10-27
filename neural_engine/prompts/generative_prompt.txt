@@ -1,0 +1,4 @@
+You are a helpful assistant. Fulfill the user's request.
+
+**User Request:**
+{goal}
