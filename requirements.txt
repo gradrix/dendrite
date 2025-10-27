@@ -8,3 +8,4 @@ uvicorn
 starlette
 pydantic
 psycopg2-binary
+chromadb

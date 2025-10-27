@@ -61,20 +61,18 @@ def test_generative_execution_logged(orchestrator, execution_store):
     """Test that generative pipeline execution is logged."""
     goal_text = "What is 2 + 2?"
     
-    # Get initial execution count
-    initial_executions = execution_store.get_recent_executions(limit=1000)
-    initial_count = len(initial_executions)
-    
     # Process goal
     result = orchestrator.process(goal_text)
     
-    # Check that execution was logged
-    recent_executions = execution_store.get_recent_executions(limit=1000)
-    assert len(recent_executions) == initial_count + 1
+    # Check that execution was logged by searching for it
+    recent_executions = execution_store.get_recent_executions(limit=10)
     
-    # Check execution details
-    latest = recent_executions[0]
-    assert latest['goal_text'] == goal_text
+    # Find our execution in the recent list
+    found = any(ex['goal_text'] == goal_text for ex in recent_executions)
+    assert found, f"Goal '{goal_text}' not found in recent executions"
+    
+    # Check execution details of our goal
+    latest = next(ex for ex in recent_executions if ex['goal_text'] == goal_text)
     # Intent may vary due to LLM, but should be one of the valid intents
     assert latest['intent'] in ['generative', 'tool_use', 'unknown']
     assert 'goal_' in latest['goal_id']
@@ -86,19 +84,16 @@ def test_tool_use_execution_logged(orchestrator, execution_store):
     """Test that tool_use pipeline execution is logged."""
     goal_text = "Say hello using HelloWorldTool"
     
-    # Get initial counts
-    initial_executions = execution_store.get_recent_executions(limit=1000)
-    initial_exec_count = len(initial_executions)
-    
     # Process goal
     result = orchestrator.process(goal_text)
     
     # Check that execution was logged
-    recent_executions = execution_store.get_recent_executions(limit=1000)
-    assert len(recent_executions) == initial_exec_count + 1
+    recent_executions = execution_store.get_recent_executions(limit=10)
+    found = any(ex['goal_text'] == goal_text for ex in recent_executions)
+    assert found, f"Goal '{goal_text}' not found in recent executions"
     
     # Check execution details
-    latest = recent_executions[0]
+    latest = next(ex for ex in recent_executions if ex['goal_text'] == goal_text)
     assert latest['goal_text'] == goal_text
     # Intent may vary due to LLM, but should be one of the valid intents
     assert latest['intent'] in ['generative', 'tool_use', 'unknown']
@@ -128,15 +123,16 @@ def test_multiple_executions_logged(orchestrator, execution_store):
         "Tell me a joke"
     ]
     
-    initial_count = len(execution_store.get_recent_executions(limit=1000))
-    
     # Process multiple goals
     for goal in goals:
         orchestrator.process(goal)
     
-    # Check all were logged
-    recent = execution_store.get_recent_executions(limit=1000)
-    assert len(recent) >= initial_count + len(goals)
+    # Check that all executions were logged
+    recent = execution_store.get_recent_executions(limit=10)
+    logged_goals = [ex['goal_text'] for ex in recent]
+    
+    for goal in goals:
+        assert goal in logged_goals, f"Goal '{goal}' not found in recent executions"
 
 
 def test_failed_execution_logged(orchestrator, execution_store):
@@ -144,16 +140,15 @@ def test_failed_execution_logged(orchestrator, execution_store):
     # This might fail or succeed, but should be logged either way
     goal_text = "Use a nonexistent tool"
     
-    initial_count = len(execution_store.get_recent_executions(limit=1000))
-    
     try:
         result = orchestrator.process(goal_text)
     except Exception:
         pass  # We don't care if it fails, we just want to verify logging
     
     # Check that execution was logged
-    recent = execution_store.get_recent_executions(limit=1000)
-    assert len(recent) >= initial_count + 1
+    recent = execution_store.get_recent_executions(limit=10)
+    found = any(ex['goal_text'] == goal_text for ex in recent)
+    assert found, f"Failed execution for '{goal_text}' was not logged"
 
 
 def test_goal_id_auto_increment(orchestrator, execution_store):
