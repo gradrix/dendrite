@@ -6,6 +6,7 @@ services:
     volumes:
       - .:/app
       - ai_tools:/app/neural_engine/tools
+      - kv_store:/app/var
     environment:
       - REDIS_HOST=redis
       - OLLAMA_HOST=http://ollama:11434
@@ -41,3 +42,4 @@ services:
 volumes:
   ai_tools:
   ollama_data:
+  kv_store:
