@@ -5,11 +5,19 @@ class GenerativeNeuron(BaseNeuron):
         with open("neural_engine/prompts/generative_prompt.txt", "r") as f:
             return f.read()
 
-    def process(self, goal_id, data: dict):
+    def process(self, goal_id, data: dict, depth=0):
         goal = data["goal"]
         prompt_template = self._load_prompt()
         prompt = prompt_template.format(goal=goal)
         response = self.ollama_client.generate(prompt=prompt)
         result = response['response']
-        self.message_bus.add_message(goal_id, "generative_response", result)
+        
+        # Use new metadata-rich message format
+        self.add_message_with_metadata(
+            goal_id=goal_id,
+            message_type="generative_response",
+            data={"response": result},
+            depth=depth
+        )
+        
         return {"response": result}

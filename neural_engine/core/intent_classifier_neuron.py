@@ -13,6 +13,12 @@ class IntentClassifierNeuron(BaseNeuron):
 
         intent = response['response'].strip().lower()
 
-        self.message_bus.add_message(goal_id, "intent", intent)
+        # Use new metadata-rich message format
+        self.add_message_with_metadata(
+            goal_id=goal_id,
+            message_type="intent",
+            data={"intent": intent, "goal": goal},
+            depth=depth
+        )
 
         return {"goal": goal, "intent": intent}

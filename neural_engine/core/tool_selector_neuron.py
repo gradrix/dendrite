@@ -29,9 +29,19 @@ class ToolSelectorNeuron(BaseNeuron):
         
         result_data = {
             "goal": goal,
-            "selected_tool_name": selected_tool_name,
-            "selected_tool_module": tool_info["module_name"],
-            "selected_tool_class": tool_info["class_name"]
+            "selected_tools": [{
+                "name": selected_tool_name,
+                "module": tool_info["module_name"],
+                "class": tool_info["class_name"]
+            }]
         }
-        self.message_bus.add_message(goal_id, "tool_selection", result_data)
+        
+        # Use new metadata-rich message format
+        self.add_message_with_metadata(
+            goal_id=goal_id,
+            message_type="tool_selection",
+            data=result_data,
+            depth=depth
+        )
+        
         return result_data

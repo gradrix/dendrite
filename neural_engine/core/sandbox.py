@@ -1,4 +1,5 @@
 import redis
+import time
 
 class Sandbox:
     def __init__(self, message_bus):
@@ -18,7 +19,7 @@ class Sandbox:
                 environment[name] = data.decode('utf-8')
         return environment
 
-    def execute(self, code: str, data_handles: dict = None) -> dict:
+    def execute(self, code: str, data_handles: dict = None, goal_id: str = None, depth: int = 0) -> dict:
         """
         Executes the given Python code in a sandboxed environment.
         """
@@ -32,9 +33,23 @@ class Sandbox:
 
         try:
             exec(code, environment)
-            return {"result": self._result, "error": None}
+            result = {"success": True, "result": self._result, "error": None}
         except Exception as e:
-            return {"result": None, "error": str(e)}
+            result = {"success": False, "result": None, "error": str(e)}
+        
+        # Store execution result in message bus if goal_id provided
+        if goal_id:
+            message = {
+                "goal_id": goal_id,
+                "neuron": "sandbox",
+                "message_type": "execution",
+                "timestamp": time.time(),
+                "depth": depth,
+                "data": result
+            }
+            self.message_bus.add_message(goal_id, "execution", message)
+        
+        return result
 
     def set_result(self, result):
         """

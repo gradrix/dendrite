@@ -12,9 +12,19 @@ class CodeGeneratorNeuron(BaseNeuron):
 
     def process(self, goal_id: str, data: dict, depth: int):
         goal = data["goal"]
-        tool_name = data["selected_tool_name"]
-        module_name = data["selected_tool_module"]
-        class_name = data["selected_tool_class"]
+        
+        # Support both old format (selected_tool_name) and new format (selected_tools list)
+        if "selected_tools" in data:
+            # New format from updated tool_selector
+            tools = data["selected_tools"]
+            tool_name = tools[0]["name"]
+            module_name = tools[0]["module"]
+            class_name = tools[0]["class"]
+        else:
+            # Old format for backward compatibility
+            tool_name = data["selected_tool_name"]
+            module_name = data["selected_tool_module"]
+            class_name = data["selected_tool_class"]
 
         # Get full tool definition for parameter info
         tool_definitions = self.tool_registry.get_all_tool_definitions()
@@ -45,7 +55,15 @@ class CodeGeneratorNeuron(BaseNeuron):
         result_data = {
             "goal": goal,
             "tool_name": tool_name,
-            "code": generated_code
+            "generated_code": generated_code
         }
-        self.message_bus.add_message(goal_id, "code_generation", result_data)
+        
+        # Use new metadata-rich message format
+        self.add_message_with_metadata(
+            goal_id=goal_id,
+            message_type="code_generation",
+            data=result_data,
+            depth=depth
+        )
+        
         return result_data
