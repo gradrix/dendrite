@@ -1,9 +1,8 @@
 from typing import Dict
-from .neuron import BaseNeuron
-from .intent_classifier_neuron import IntentClassifierNeuron
-from .generative_neuron import GenerativeNeuron
-from ..tools.python_script_tool import PythonScriptTool
-from .tool_registry import ToolRegistry
+from neural_engine.core.neuron import BaseNeuron
+from neural_engine.core.intent_classifier_neuron import IntentClassifierNeuron
+from neural_engine.core.generative_neuron import GenerativeNeuron
+from neural_engine.core.tool_registry import ToolRegistry
 
 class Orchestrator:
     def __init__(self, neuron_registry: Dict[str, BaseNeuron], tool_registry: ToolRegistry, message_bus, max_depth=10):
@@ -30,5 +29,16 @@ class Orchestrator:
             return {"error": f"Unknown or unsupported intent: {intent}"}
 
     def _execute_tool_use_pipeline(self, goal_id, data, depth):
-        # ... (pipeline execution with depth passed to each neuron)
-        return {"status": "success", "message": "Tool use pipeline executed."}
+        # 1. Select the tool
+        tool_selector = self.neuron_registry["tool_selector"]
+        tool_selection_data = tool_selector.process(goal_id, data['goal'], depth)
+
+        # 2. Generate the code
+        code_generator = self.neuron_registry["code_generator"]
+        code_generation_data = code_generator.process(goal_id, tool_selection_data, depth)
+
+        # 3. Execute the code in the sandbox
+        sandbox = self.neuron_registry["sandbox"]
+        execution_result = sandbox.execute(code_generation_data["code"])
+
+        return execution_result
