@@ -16,9 +16,28 @@ services:
         condition: service_started
 
   redis:
-    image: redis:latest
+    image: redis:7-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dendrite
+      POSTGRES_USER: dendrite
+      POSTGRES_PASSWORD: dendrite_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dendrite"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   ollama:
     image: ollama/ollama:latest
@@ -38,18 +57,27 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
-    volumes:
-      - .:/app  # Mount source for live debugging
-    environment:
-      - REDIS_HOST=redis
-      - OLLAMA_HOST=http://ollama:11434
     depends_on:
-      - redis
-      - ollama
-    # Expose debugpy port for remote debugging
-    ports:
-      - "5678:5678"
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: mistral
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: dendrite
+      POSTGRES_USER: dendrite
+      POSTGRES_PASSWORD: dendrite_pass
+    volumes:
+      - .:/app
+    command: pytest
 
 volumes:
+  redis_data:
+  postgres_data:
   ollama_data:
   kv_store:

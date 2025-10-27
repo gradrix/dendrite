@@ -1,23 +1,31 @@
 from typing import Dict, Optional
+import time
 from neural_engine.core.neuron import BaseNeuron
 from neural_engine.core.intent_classifier_neuron import IntentClassifierNeuron
 from neural_engine.core.generative_neuron import GenerativeNeuron
 from neural_engine.core.tool_registry import ToolRegistry
+from neural_engine.core.execution_store import ExecutionStore
 
 class Orchestrator:
     def __init__(self, intent_classifier=None, tool_selector=None, code_generator=None, 
                  generative_neuron=None, message_bus=None, sandbox=None,
                  neuron_registry: Optional[Dict[str, BaseNeuron]] = None, 
-                 tool_registry: Optional[ToolRegistry] = None, 
+                 tool_registry: Optional[ToolRegistry] = None,
+                 execution_store: Optional[ExecutionStore] = None,
                  max_depth=10):
         """Initialize Orchestrator with either individual neurons or a neuron registry.
         
         New API (Phase 6+): Pass individual neurons:
             Orchestrator(intent_classifier=..., tool_selector=..., code_generator=..., 
-                        generative_neuron=..., message_bus=..., sandbox=...)
+                        generative_neuron=..., message_bus=..., sandbox=..., 
+                        execution_store=...)
         
         Old API (Phases 0-5): Pass neuron_registry and tool_registry:
             Orchestrator(neuron_registry={...}, tool_registry=..., message_bus=...)
+        
+        Args:
+            execution_store: Optional ExecutionStore for logging executions.
+                           If None and PostgreSQL is available, creates one automatically.
         """
         # Support both old and new initialization patterns
         if neuron_registry is not None:
@@ -46,6 +54,16 @@ class Orchestrator:
         
         self.max_depth = max_depth
         self.goal_counter = 0  # Track goals for auto-incrementing goal IDs
+        
+        # Initialize ExecutionStore for logging
+        self.execution_store = execution_store
+        if self.execution_store is None:
+            try:
+                self.execution_store = ExecutionStore()
+            except Exception as e:
+                # If PostgreSQL is not available, continue without logging
+                print(f"Warning: ExecutionStore not available: {e}")
+                self.execution_store = None
     
     def process(self, goal: str, goal_id: Optional[str] = None, depth=0):
         """Process a user goal through the complete pipeline.
@@ -63,7 +81,23 @@ class Orchestrator:
             self.goal_counter += 1
             goal_id = f"goal_{self.goal_counter}"
         
-        return self.execute(goal_id, goal, depth)
+        # Track execution timing
+        start_time = time.time()
+        
+        # Execute the pipeline
+        result = self.execute(goal_id, goal, depth)
+        
+        # Calculate duration
+        duration_ms = int((time.time() - start_time) * 1000)
+        
+        # Log execution to database if available
+        if self.execution_store:
+            try:
+                self._log_execution(goal_id, goal, result, duration_ms, depth)
+            except Exception as e:
+                print(f"Warning: Failed to log execution: {e}")
+        
+        return result
 
     def execute(self, goal_id, goal: str, depth=0):
         if depth > self.max_depth:
@@ -101,3 +135,58 @@ class Orchestrator:
         execution_result = sandbox.execute(code, goal_id=goal_id, depth=depth)
 
         return execution_result
+    
+    def _log_execution(self, goal_id: str, goal_text: str, result: Dict, duration_ms: int, depth: int):
+        """Log execution to ExecutionStore.
+        
+        Args:
+            goal_id: The goal identifier
+            goal_text: Original user request
+            result: Pipeline result dictionary
+            duration_ms: Execution duration in milliseconds
+            depth: Recursion depth
+        """
+        # Extract key information from result
+        intent = result.get('intent', 'unknown')
+        success = result.get('success', False)
+        error = result.get('error')
+        
+        # Store main execution
+        execution_id = self.execution_store.store_execution(
+            goal_id=goal_id,
+            goal_text=goal_text,
+            intent=intent,
+            success=success,
+            error=error,
+            duration_ms=duration_ms,
+            metadata={
+                'depth': depth,
+                'result': result,
+                'timestamp': time.time()
+            }
+        )
+        
+        # If tool was used, log tool execution
+        if intent == "tool_use" and 'selected_tools' in result:
+            selected_tools = result['selected_tools']
+            if isinstance(selected_tools, str):
+                selected_tools = [selected_tools]
+            
+            for tool_name in selected_tools:
+                # Extract tool-specific data
+                tool_params = result.get('tool_parameters', {})
+                tool_result = result.get('execution_result')
+                tool_success = result.get('success', False)
+                tool_error = result.get('error')
+                
+                self.execution_store.store_tool_execution(
+                    execution_id=execution_id,
+                    tool_name=tool_name,
+                    parameters=tool_params,
+                    result=tool_result,
+                    success=tool_success,
+                    error=tool_error,
+                    duration_ms=None  # Individual tool timing not tracked yet
+                )
+        
+        return execution_id
