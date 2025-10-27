@@ -1,14 +1,20 @@
-You are an expert Python programmer. Your task is to write a Python script to process data stored in Redis, based on a given goal and a schema.
+You are an expert Python programmer. Your task is to write a short, sandboxed Python script to achieve a user's goal by calling a specific tool.
 
-**Goal:** {goal}
-**Data Location:** {data_handle}
-**Data Schema:** {schema}
+The user's goal is:
+---
+{goal}
+---
 
-Write a Python script that:
-1.  Connects to Redis.
-2.  Retrieves the data from the specified key.
-3.  Parses the JSON data.
-4.  Executes the logic required to achieve the goal.
-5.  Prints only the final result.
+The selected tool to use is: `{tool_name}`
+The tool's module is: `neural_engine.tools.{module_name}`
+The tool's class is: `{class_name}`
 
-**IMPORTANT:** Your response must *only* contain the Python script inside a markdown block.
+You must write a Python script that:
+1. Imports `{class_name}` from `neural_engine.tools.{module_name}`.
+2. Instantiates the `{class_name}`.
+3. Calls the tool's `execute` method.
+4. Passes the result of the `execute` method to the `sandbox.set_result()` function.
+
+**Important:** The `sandbox` object is already available in the global scope. Do NOT try to `import sandbox`.
+
+Do not write any other code. Only provide the Python script itself, without any explanations.

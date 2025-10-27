@@ -1,30 +1,38 @@
 from .neuron import BaseNeuron
-import re
+import json
 
 class CodeGeneratorNeuron(BaseNeuron):
     def _load_prompt(self):
         with open("neural_engine/prompts/code_generator_prompt.txt", "r") as f:
             return f.read()
 
-    def process(self, goal_id, data: dict):
+    def process(self, goal_id: str, data: dict, depth: int):
         goal = data["goal"]
-        data_handle = data.get("data_handle")
-        schema = data.get("schema")
+        tool_name = data["selected_tool_name"]
+        module_name = data["selected_tool_module"]
+        class_name = data["selected_tool_class"]
 
         prompt_template = self._load_prompt()
         prompt = prompt_template.format(
             goal=goal,
-            data_handle=data_handle,
-            schema=schema
+            tool_name=tool_name,
+            module_name=module_name,
+            class_name=class_name
         )
 
         response = self.ollama_client.generate(prompt=prompt)
-        code = response['response']
+        generated_code = response['response'].strip()
 
-        if "```python" in code:
-            code = code.split("```python")[1].split("```")[0]
+        # Clean up the code if it's wrapped in markdown
+        if generated_code.startswith("```python"):
+            generated_code = generated_code[9:]
+        if generated_code.endswith("```"):
+            generated_code = generated_code[:-3]
 
-        data["code"] = code
-        self.message_bus.add_message(goal_id, "generated_code", code)
-
-        return data
+        result_data = {
+            "goal": goal,
+            "tool_name": tool_name,
+            "code": generated_code
+        }
+        self.message_bus.add_message(goal_id, "code_generation", result_data)
+        return result_data
