@@ -8,7 +8,7 @@ This tool has several intentional bugs:
 4. String inputs cause crashes
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 from neural_engine.tools.base_tool import BaseTool
 
 
@@ -76,3 +76,40 @@ class BuggyCalculatorTool(BaseTool):
             'result': result,
             'operation': operation
         }
+    
+    def get_tool_characteristics(self) -> Dict[str, Any]:
+        """
+        Calculator is read-only and idempotent - perfect for shadow testing!
+        """
+        return {
+            "idempotent": True,  # Same inputs = same outputs
+            "side_effects": [],  # No database writes, no API calls
+            "safe_for_shadow_testing": True,  # Totally safe to run multiple times
+            "requires_mocking": [],  # No external dependencies
+            "test_data_available": True  # We have test cases below
+        }
+    
+    def get_test_cases(self) -> List[Dict[str, Any]]:
+        """
+        Provide test cases for validation.
+        """
+        return [
+            {
+                "input": {"operation": "add", "a": 5, "b": 3},
+                "expected_output": {"success": True, "result": 8, "operation": "add"},
+                "should_raise": None,
+                "description": "Addition works"
+            },
+            {
+                "input": {"operation": "divide", "a": 10, "b": 2},
+                "expected_output": {"success": True, "result": 5.0, "operation": "divide"},
+                "should_raise": None,
+                "description": "Division works"
+            },
+            {
+                "input": {"operation": "divide", "a": 10, "b": 0},
+                "expected_output": None,
+                "should_raise": ZeroDivisionError,
+                "description": "Division by zero should be handled"
+            }
+        ]
