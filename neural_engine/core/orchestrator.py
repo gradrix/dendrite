@@ -6,6 +6,7 @@ from neural_engine.core.generative_neuron import GenerativeNeuron
 from neural_engine.core.tool_registry import ToolRegistry
 from neural_engine.core.execution_store import ExecutionStore
 from neural_engine.core.tool_discovery import ToolDiscovery
+from neural_engine.core.tool_lifecycle_manager import ToolLifecycleManager
 
 class Orchestrator:
     def __init__(self, intent_classifier=None, tool_selector=None, code_generator=None, 
@@ -14,14 +15,16 @@ class Orchestrator:
                  tool_registry: Optional[ToolRegistry] = None,
                  execution_store: Optional[ExecutionStore] = None,
                  tool_discovery: Optional[ToolDiscovery] = None,
+                 lifecycle_manager: Optional[ToolLifecycleManager] = None,
                  enable_semantic_search: bool = True,
+                 enable_lifecycle_sync: bool = True,
                  max_depth=10):
         """Initialize Orchestrator with either individual neurons or a neuron registry.
         
         New API (Phase 6+): Pass individual neurons:
             Orchestrator(intent_classifier=..., tool_selector=..., code_generator=..., 
                         generative_neuron=..., message_bus=..., sandbox=..., 
-                        execution_store=..., tool_discovery=...)
+                        execution_store=..., tool_discovery=..., lifecycle_manager=...)
         
         Old API (Phases 0-5): Pass neuron_registry and tool_registry:
             Orchestrator(neuron_registry={...}, tool_registry=..., message_bus=...)
@@ -31,7 +34,10 @@ class Orchestrator:
                            If None and PostgreSQL is available, creates one automatically.
             tool_discovery: Optional ToolDiscovery for semantic tool search (Phase 8d).
                           If None and enable_semantic_search=True, creates one automatically.
+            lifecycle_manager: Optional ToolLifecycleManager for autonomous tool lifecycle (Phase 9d).
+                             If None and enable_lifecycle_sync=True, creates one automatically.
             enable_semantic_search: If True, enables 3-stage tool discovery (default: True)
+            enable_lifecycle_sync: If True, enables autonomous tool lifecycle management (default: True)
         """
         # Support both old and new initialization patterns
         if neuron_registry is not None:
@@ -88,6 +94,31 @@ class Orchestrator:
             except Exception as e:
                 print(f"Warning: ToolDiscovery not available: {e}")
                 self.tool_discovery = None
+        
+        # Initialize ToolLifecycleManager for autonomous lifecycle management (Phase 9d)
+        self.lifecycle_manager = lifecycle_manager
+        if self.lifecycle_manager is None and enable_lifecycle_sync and self.execution_store:
+            try:
+                # Auto-create ToolLifecycleManager with tool_registry and execution_store
+                if self.tool_selector and hasattr(self.tool_selector, 'tool_registry'):
+                    self.lifecycle_manager = ToolLifecycleManager(
+                        tool_registry=self.tool_selector.tool_registry,
+                        execution_store=self.execution_store
+                    )
+                    # Run initial sync to detect any orphaned tools
+                    sync_report = self.lifecycle_manager.sync_and_reconcile()
+                    if sync_report['newly_deleted'] or sync_report['alerts']:
+                        print(f"✓ Tool lifecycle sync enabled")
+                        if sync_report['newly_deleted']:
+                            print(f"  - Detected {len(sync_report['newly_deleted'])} deleted tools")
+                        if sync_report['alerts']:
+                            print(f"  ⚠️  {len(sync_report['alerts'])} alerts generated")
+                            for alert in sync_report['alerts']:
+                                if alert.get('alert'):
+                                    print(f"     - {alert['tool_name']}: {alert.get('reason', 'unknown')}")
+            except Exception as e:
+                print(f"Warning: ToolLifecycleManager not available: {e}")
+                self.lifecycle_manager = None
     
     def process(self, goal: str, goal_id: Optional[str] = None, depth=0):
         """Process a user goal through the complete pipeline.
@@ -218,4 +249,81 @@ class Orchestrator:
                     duration_ms=None  # Individual tool timing not tracked yet
                 )
         
+        # Run lifecycle sync after tool operations (Phase 9d)
+        if self.lifecycle_manager and intent == "tool_use":
+            try:
+                sync_report = self.lifecycle_manager.sync_and_reconcile()
+                # Log any alerts from sync
+                if sync_report.get('alerts'):
+                    for alert in sync_report['alerts']:
+                        if alert.get('alert'):
+                            print(f"⚠️  Lifecycle Alert: {alert['tool_name']} - {alert.get('suggestion', alert.get('reason'))}")
+            except Exception as e:
+                print(f"Warning: Lifecycle sync failed: {e}")
+        
         return execution_id
+    
+    def run_lifecycle_maintenance(self, dry_run: bool = False) -> Dict:
+        """
+        Run tool lifecycle maintenance tasks.
+        
+        This should be called periodically (e.g., daily) to:
+        - Sync filesystem and database
+        - Detect deleted tools
+        - Alert on valuable tool deletions
+        - Auto-archive old deleted tools
+        
+        Args:
+            dry_run: If True, only preview what would be done
+        
+        Returns:
+            Maintenance report with sync, cleanup, and alert details
+        """
+        if not self.lifecycle_manager:
+            return {
+                'error': 'LifecycleManager not available',
+                'status': 'disabled'
+            }
+        
+        try:
+            report = self.lifecycle_manager.maintenance(dry_run=dry_run)
+            
+            # Print summary
+            print("\n=== Tool Lifecycle Maintenance ===")
+            print(f"Timestamp: {report.get('timestamp')}")
+            
+            if report.get('sync_report'):
+                sync = report['sync_report']
+                print(f"\nSync Report:")
+                print(f"  Newly deleted: {len(sync.get('newly_deleted', []))}")
+                print(f"  Restored: {len(sync.get('restored', []))}")
+                print(f"  New manual tools: {len(sync.get('new_manual_tools', []))}")
+                
+                if sync.get('alerts'):
+                    print(f"\n  ⚠️  Alerts ({len(sync['alerts'])}):")
+                    for alert in sync['alerts']:
+                        if alert.get('alert'):
+                            severity = alert.get('severity', 'info').upper()
+                            print(f"    [{severity}] {alert['tool_name']}: {alert.get('suggestion', alert.get('reason'))}")
+            
+            if report.get('cleanup_report'):
+                cleanup = report['cleanup_report']
+                if cleanup.get('preview'):
+                    print(f"\nCleanup Preview:")
+                    print(f"  Would archive: {cleanup.get('total_would_archive', 0)} tools")
+                    print(f"  Would keep: {cleanup.get('total_would_keep', 0)} tools")
+                else:
+                    print(f"\nCleanup Report:")
+                    print(f"  Archived: {cleanup.get('total_archived', 0)} tools")
+                    print(f"  Kept: {cleanup.get('total_kept', 0)} tools")
+            
+            print("\n" + "=" * 35)
+            
+            return report
+            
+        except Exception as e:
+            print(f"❌ Maintenance failed: {e}")
+            return {
+                'error': str(e),
+                'status': 'failed'
+            }
