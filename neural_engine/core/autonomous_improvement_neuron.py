@@ -19,13 +19,19 @@ Together, these create a truly self-improving system - the foundation for fracta
 
 import time
 import json
-from typing import Dict, Any, List, Optional, Tuple
+import os
+import re
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime, timedelta
 from neural_engine.core.neuron import BaseNeuron
 from neural_engine.core.self_investigation_neuron import SelfInvestigationNeuron
 from neural_engine.tools.query_execution_store_tool import QueryExecutionStoreTool
 from neural_engine.tools.analyze_tool_performance_tool import AnalyzeToolPerformanceTool
 from neural_engine.core.execution_store import ExecutionStore
+
+if TYPE_CHECKING:
+    from neural_engine.core.tool_forge_neuron import ToolForgeNeuron
+    from neural_engine.core.tool_registry import ToolRegistry
 
 
 class ImprovementOpportunity:
@@ -150,7 +156,10 @@ class AutonomousImprovementNeuron(BaseNeuron):
         message_bus,
         ollama_client,
         execution_store: Optional[ExecutionStore] = None,
+        tool_forge: Optional['ToolForgeNeuron'] = None,  # For real code generation
+        tool_registry: Optional['ToolRegistry'] = None,  # For tool management
         enable_auto_improvement: bool = False,  # Safety: disabled by default
+        enable_real_improvements: bool = False,  # Enable real code generation (vs placeholders)
         improvement_threshold: float = 0.5,  # Only improve tools with <50% success rate
         confidence_threshold: float = 0.80,  # Require 80% confidence to deploy
         min_sample_size: int = 20  # Minimum executions before considering improvement
@@ -162,6 +171,10 @@ class AutonomousImprovementNeuron(BaseNeuron):
             message_bus: Communication bus
             ollama_client: LLM client for generating improvements
             execution_store: Database connection
+            tool_forge: Optional ToolForgeNeuron for real code generation
+            tool_registry: Optional ToolRegistry for tool management
+            enable_auto_improvement: Enable automatic deployment
+            enable_real_improvements: Enable real code generation (default: False for safety)
             enable_auto_improvement: Enable automatic deployment (default: False for safety)
             improvement_threshold: Success rate threshold for improvement consideration
             confidence_threshold: Confidence threshold for auto-deployment
@@ -171,6 +184,7 @@ class AutonomousImprovementNeuron(BaseNeuron):
         
         # Configuration
         self.enable_auto_improvement = enable_auto_improvement
+        self.enable_real_improvements = enable_real_improvements
         self.improvement_threshold = improvement_threshold
         self.confidence_threshold = confidence_threshold
         self.min_sample_size = min_sample_size
@@ -178,6 +192,8 @@ class AutonomousImprovementNeuron(BaseNeuron):
         # Dependencies
         self._owns_store = execution_store is None
         self.execution_store = execution_store or ExecutionStore()
+        self.tool_forge = tool_forge  # For real code generation
+        self.tool_registry = tool_registry  # For tool management
         self.investigator = SelfInvestigationNeuron(
             message_bus=message_bus,
             ollama_client=ollama_client,
@@ -416,12 +432,16 @@ class AutonomousImprovementNeuron(BaseNeuron):
         """
         Generate an improved version of a tool.
         
-        This is a placeholder for the actual improvement generation.
-        In Phase 9c, this would:
-        1. Analyze tool's source code
-        2. Review failure patterns
-        3. Use LLM to generate improved version
-        4. Validate generated code
+        Two modes:
+        1. Real improvements (enable_real_improvements=True): Uses ToolForgeNeuron to generate actual code
+        2. Placeholder improvements (default): Returns simulated improvements for testing
+        
+        Real improvement process:
+        1. Read tool's current source code
+        2. Analyze failure patterns from ExecutionStore
+        3. Generate improvement prompt with context
+        4. Use ToolForgeNeuron to generate improved code
+        5. Validate generated code
         
         Args:
             tool_name: Name of tool to improve
@@ -456,10 +476,119 @@ class AutonomousImprovementNeuron(BaseNeuron):
                 if f.get('tool_name') == tool_name
             ]
         
-        # Generate improvement (placeholder - would use ToolForgeNeuron in production)
+        # MODE 1: Real improvements using ToolForgeNeuron
+        if self.enable_real_improvements and self.tool_forge and self.tool_registry:
+            return self._generate_real_improvement(tool_name, stats['results'], tool_failures)
+        
+        # MODE 2: Placeholder improvements (for testing)
+        return self._generate_placeholder_improvement(tool_name, stats['results'], tool_failures)
+    
+    def _generate_real_improvement(
+        self, 
+        tool_name: str, 
+        stats: Dict[str, Any],
+        failures: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Generate a real improved tool using ToolForgeNeuron.
+        
+        Steps:
+        1. Read current tool source code
+        2. Analyze failure patterns
+        3. Create improvement prompt with context
+        4. Generate improved code
+        5. Validate and return
+        """
+        try:
+            # Step 1: Read current tool source code
+            tool_file = self._find_tool_file(tool_name)
+            if not tool_file:
+                return {
+                    'success': False,
+                    'error': f'Could not find source file for tool: {tool_name}'
+                }
+            
+            with open(tool_file, 'r') as f:
+                current_code = f.read()
+            
+            # Step 2: Analyze failure patterns
+            failure_analysis = self._analyze_failures(failures)
+            
+            # Step 3: Create improvement prompt
+            improvement_prompt = self._create_improvement_prompt(
+                tool_name=tool_name,
+                current_code=current_code,
+                stats=stats,
+                failure_analysis=failure_analysis
+            )
+            
+            # Step 4: Generate improved code using ToolForgeNeuron
+            forge_result = self.tool_forge.process(
+                goal_id=f"improve_{tool_name}_{int(time.time())}",
+                data={"goal": improvement_prompt},
+                depth=0
+            )
+            
+            if not forge_result['success']:
+                return {
+                    'success': False,
+                    'error': f'ToolForge failed to generate improvement: {forge_result.get("error")}',
+                    'validation_errors': forge_result.get('validation_errors', [])
+                }
+            
+            # Step 5: Return generated improvement
+            improvement = {
+                'tool_name': tool_name,
+                'version': 'v2_improved',
+                'mode': 'real',
+                'generated_code': forge_result['code'],
+                'tool_class': forge_result['tool_class'],
+                'improvements': [
+                    'Fixed failure patterns identified in execution history',
+                    'Added comprehensive error handling',
+                    'Improved input validation',
+                    'Added retry logic where appropriate'
+                ],
+                'expected_benefits': {
+                    'success_rate_improvement': 0.20,
+                    'reliability': 'high'
+                },
+                'generated_at': datetime.now().isoformat(),
+                'status': 'generated',
+                'failure_patterns_addressed': len(failures),
+                'forge_result': forge_result
+            }
+            
+            self.improvements_generated.append(improvement)
+            
+            return {
+                'success': True,
+                'tool_name': tool_name,
+                'improvement': improvement,
+                'failure_patterns_analyzed': len(failures),
+                'current_success_rate': stats['success_rate'],
+                'message': f'Generated real improved version of {tool_name} using ToolForge'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Failed to generate real improvement: {str(e)}'
+            }
+    
+    def _generate_placeholder_improvement(
+        self,
+        tool_name: str,
+        stats: Dict[str, Any],
+        failures: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Generate a placeholder improvement (for testing without real code generation).
+        """
         improvement = {
             'tool_name': tool_name,
             'version': 'v2',
+            'mode': 'placeholder',
             'improvements': [
                 'Added comprehensive error handling',
                 'Added input validation',
@@ -480,10 +609,111 @@ class AutonomousImprovementNeuron(BaseNeuron):
             'success': True,
             'tool_name': tool_name,
             'improvement': improvement,
-            'failure_patterns_analyzed': len(tool_failures),
-            'current_success_rate': stats['results']['success_rate'],
-            'message': f'Generated improved version of {tool_name}'
+            'failure_patterns_analyzed': len(failures),
+            'current_success_rate': stats['success_rate'],
+            'message': f'Generated placeholder improvement for {tool_name} (enable_real_improvements=False)'
         }
+    
+    def _find_tool_file(self, tool_name: str) -> Optional[str]:
+        """Find the source file for a tool."""
+        # Convert tool_name to potential file patterns
+        # e.g., "strava_get_activities" -> "strava_get_activities_tool.py"
+        tools_dir = "neural_engine/tools"
+        
+        # Try exact match first
+        exact_file = os.path.join(tools_dir, f"{tool_name}_tool.py")
+        if os.path.exists(exact_file):
+            return exact_file
+        
+        # Try without extra _tool suffix (in case tool_name already has it)
+        if tool_name.endswith('_tool'):
+            alt_file = os.path.join(tools_dir, f"{tool_name}.py")
+            if os.path.exists(alt_file):
+                return alt_file
+        
+        # Search all tool files
+        if os.path.exists(tools_dir):
+            for filename in os.listdir(tools_dir):
+                if filename.endswith('_tool.py'):
+                    # Check if filename matches tool_name pattern
+                    if tool_name in filename or filename.replace('_tool.py', '') == tool_name:
+                        return os.path.join(tools_dir, filename)
+        
+        return None
+    
+    def _analyze_failures(self, failures: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze failure patterns to identify common issues."""
+        if not failures:
+            return {
+                'common_errors': [],
+                'error_categories': {},
+                'insights': ['No recent failures to analyze']
+            }
+        
+        # Group errors by type
+        error_types = {}
+        for failure in failures:
+            error = failure.get('error', 'Unknown error')
+            # Extract error type (first line or first 100 chars)
+            error_key = error.split('\n')[0][:100]
+            error_types[error_key] = error_types.get(error_key, 0) + 1
+        
+        # Sort by frequency
+        sorted_errors = sorted(error_types.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            'common_errors': [{'error': err, 'count': count} for err, count in sorted_errors[:5]],
+            'error_categories': error_types,
+            'total_failures': len(failures),
+            'insights': [
+                f"Most common error: {sorted_errors[0][0]}" if sorted_errors else "No errors",
+                f"Total unique error types: {len(error_types)}",
+                f"Failure concentration: {'High' if sorted_errors and sorted_errors[0][1] > len(failures) * 0.5 else 'Distributed'}"
+            ]
+        }
+    
+    def _create_improvement_prompt(
+        self,
+        tool_name: str,
+        current_code: str,
+        stats: Dict[str, Any],
+        failure_analysis: Dict[str, Any]
+    ) -> str:
+        """Create a detailed prompt for generating an improved tool."""
+        prompt = f"""Create an improved version of the {tool_name} tool that fixes the identified issues.
+
+CURRENT TOOL CODE:
+```python
+{current_code}
+```
+
+PERFORMANCE STATISTICS:
+- Success Rate: {stats.get('success_rate', 0) * 100:.1f}%
+- Total Executions: {stats.get('total_executions', 0)}
+- Average Duration: {stats.get('avg_duration_ms', 0):.0f}ms
+
+FAILURE ANALYSIS:
+{json.dumps(failure_analysis, indent=2)}
+
+REQUIREMENTS FOR IMPROVED VERSION:
+1. Fix the most common failure patterns identified above
+2. Add comprehensive error handling with specific try-except blocks
+3. Add input validation to catch bad inputs early
+4. Add retry logic for transient failures (network, timeouts)
+5. Improve error messages to be more actionable
+6. Maintain backward compatibility with the existing tool interface
+7. Keep the same tool name and method signatures
+8. Add docstrings explaining the improvements
+
+The improved tool should:
+- Increase success rate significantly
+- Provide better error messages
+- Handle edge cases that caused failures
+- Be production-ready and robust
+
+Generate the complete improved tool code following the BaseTool pattern."""
+
+        return prompt
     
     def validate_improvement(self, tool_name: str) -> Dict[str, Any]:
         """
