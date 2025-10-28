@@ -603,6 +603,10 @@ class TestDeploymentAndRollback:
         )
         
         try:
+            # First generate an improvement
+            neuron.improve_tool('improvement_test_failing_tool')
+            
+            # Then deploy it
             result = neuron.deploy_improvement('improvement_test_failing_tool')
             
             assert result['success'] is True
@@ -644,6 +648,10 @@ class TestDeploymentAndRollback:
         )
         
         try:
+            # First generate an improvement
+            neuron.improve_tool('improvement_test_failing_tool')
+            
+            # Then deploy it
             result = neuron.deploy_improvement('improvement_test_failing_tool')
             
             assert result['success'] is True

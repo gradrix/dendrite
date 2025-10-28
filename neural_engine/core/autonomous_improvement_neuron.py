@@ -790,31 +790,158 @@ Generate the complete improved tool code following the BaseTool pattern."""
             )
         }
     
-    def deploy_improvement(self, tool_name: str) -> Dict[str, Any]:
+    def deploy_improvement(self, tool_name: str, improvement_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Deploy an approved improvement.
         
-        This would:
-        1. Backup old version
-        2. Deploy new version
-        3. Monitor for issues
-        4. Rollback if problems detected
+        Two modes:
+        1. Real deployment (enable_real_improvements=True): Actually writes improved code to disk
+        2. Simulated deployment (default): Returns deployment metadata for testing
+        
+        Real deployment process:
+        1. Find the latest generated improvement for this tool
+        2. Backup current tool version
+        3. Write improved code to file
+        4. Refresh tool registry
+        5. Verify tool is loadable
         
         Args:
             tool_name: Name of tool to deploy
+            improvement_data: Optional improvement data (if not provided, uses latest from improvements_generated)
             
         Returns:
             Dict with deployment status
         """
         self.deployment_count += 1
         
-        # In production, this would actually deploy the new tool version
-        # For now, we'll simulate the deployment
+        # Get improvement data
+        if not improvement_data:
+            # Find latest improvement for this tool
+            tool_improvements = [
+                imp for imp in self.improvements_generated
+                if imp['tool_name'] == tool_name
+            ]
+            if not tool_improvements:
+                return {
+                    'success': False,
+                    'error': f'No improvement found for {tool_name}. Generate improvement first.'
+                }
+            improvement_data = tool_improvements[-1]  # Most recent
         
+        # MODE 1: Real deployment
+        if self.enable_real_improvements and improvement_data.get('mode') == 'real':
+            return self._deploy_real_improvement(tool_name, improvement_data)
+        
+        # MODE 2: Simulated deployment (for testing)
+        return self._deploy_simulated_improvement(tool_name, improvement_data)
+    
+    def _deploy_real_improvement(self, tool_name: str, improvement_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Actually deploy the improved tool to the file system.
+        
+        Steps:
+        1. Backup current version
+        2. Write improved code to file
+        3. Refresh tool registry
+        4. Verify tool loads correctly
+        """
+        try:
+            # Step 1: Find current tool file
+            current_file = self._find_tool_file(tool_name)
+            if not current_file:
+                return {
+                    'success': False,
+                    'error': f'Could not find tool file for {tool_name}'
+                }
+            
+            # Step 2: Create backup
+            backup_result = self._create_tool_backup(current_file, tool_name)
+            if not backup_result['success']:
+                return backup_result
+            
+            # Step 3: Write improved code to file
+            generated_code = improvement_data.get('generated_code')
+            if not generated_code:
+                return {
+                    'success': False,
+                    'error': 'No generated code found in improvement data'
+                }
+            
+            # Write to file
+            try:
+                with open(current_file, 'w') as f:
+                    f.write(generated_code)
+            except Exception as e:
+                # Restore backup if write fails
+                self._restore_backup(backup_result['backup_path'], current_file)
+                return {
+                    'success': False,
+                    'error': f'Failed to write improved code: {str(e)}'
+                }
+            
+            # Step 4: Refresh tool registry
+            if self.tool_registry:
+                try:
+                    self.tool_registry.refresh()
+                except Exception as e:
+                    # Restore backup if registry refresh fails
+                    self._restore_backup(backup_result['backup_path'], current_file)
+                    return {
+                        'success': False,
+                        'error': f'Tool registry refresh failed: {str(e)}'
+                    }
+            
+            # Step 5: Verify tool loads correctly
+            verification = self._verify_tool_deployment(tool_name)
+            if not verification['success']:
+                # Restore backup if verification fails
+                self._restore_backup(backup_result['backup_path'], current_file)
+                if self.tool_registry:
+                    self.tool_registry.refresh()
+                return {
+                    'success': False,
+                    'error': f'Deployment verification failed: {verification["error"]}',
+                    'backup_restored': True
+                }
+            
+            # Success!
+            deployment = {
+                'tool_name': tool_name,
+                'deployed_at': datetime.now().isoformat(),
+                'deployment_strategy': 'direct_replacement',
+                'mode': 'real',
+                'status': 'deployed',
+                'backup_created': True,
+                'backup_path': backup_result['backup_path'],
+                'rollback_available': True,
+                'file_path': current_file,
+                'verification': verification
+            }
+            
+            self.improvements_deployed.append(deployment)
+            
+            return {
+                'success': True,
+                'tool_name': tool_name,
+                'deployment': deployment,
+                'message': f'Successfully deployed improved version of {tool_name}'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Deployment failed: {str(e)}'
+            }
+    
+    def _deploy_simulated_improvement(self, tool_name: str, improvement_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Simulate deployment (for testing without actually modifying files).
+        """
         deployment = {
             'tool_name': tool_name,
             'deployed_at': datetime.now().isoformat(),
-            'deployment_strategy': 'gradual_rollout',
+            'deployment_strategy': 'simulated',
+            'mode': 'placeholder',
             'status': 'deployed',
             'backup_created': True,
             'rollback_available': True
@@ -826,12 +953,149 @@ Generate the complete improved tool code following the BaseTool pattern."""
             'success': True,
             'tool_name': tool_name,
             'deployment': deployment,
-            'message': f'Successfully deployed improved version of {tool_name}'
+            'message': f'Simulated deployment of {tool_name} (enable_real_improvements=False)'
         }
+    
+    def _create_tool_backup(self, tool_file: str, tool_name: str) -> Dict[str, Any]:
+        """
+        Create a backup of the current tool version.
+        
+        Args:
+            tool_file: Path to current tool file
+            tool_name: Name of the tool
+            
+        Returns:
+            Dict with backup info or error
+        """
+        try:
+            import shutil
+            
+            # Create backups directory
+            backups_dir = "neural_engine/tools/backups"
+            os.makedirs(backups_dir, exist_ok=True)
+            
+            # Generate backup filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_filename = f"{tool_name}_backup_{timestamp}.py"
+            backup_path = os.path.join(backups_dir, backup_filename)
+            
+            # Copy file
+            shutil.copy2(tool_file, backup_path)
+            
+            # Create metadata file
+            metadata = {
+                'tool_name': tool_name,
+                'original_file': tool_file,
+                'backup_created_at': datetime.now().isoformat(),
+                'backup_reason': 'autonomous_improvement'
+            }
+            metadata_path = backup_path.replace('.py', '_metadata.json')
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            return {
+                'success': True,
+                'backup_path': backup_path,
+                'metadata_path': metadata_path
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Failed to create backup: {str(e)}'
+            }
+    
+    def _restore_backup(self, backup_path: str, target_file: str) -> bool:
+        """
+        Restore a tool from backup.
+        
+        Args:
+            backup_path: Path to backup file
+            target_file: Path to restore to
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import shutil
+            shutil.copy2(backup_path, target_file)
+            return True
+        except Exception as e:
+            print(f"Failed to restore backup: {e}")
+            return False
+    
+    def _verify_tool_deployment(self, tool_name: str) -> Dict[str, Any]:
+        """
+        Verify that a deployed tool loads correctly.
+        
+        Args:
+            tool_name: Name of tool to verify
+            
+        Returns:
+            Dict with verification results
+        """
+        if not self.tool_registry:
+            return {
+                'success': True,
+                'message': 'No tool registry available for verification'
+            }
+        
+        try:
+            # Check if tool is in registry
+            all_tools = self.tool_registry.get_all_tool_definitions()
+            
+            if tool_name not in all_tools:
+                return {
+                    'success': False,
+                    'error': f'Tool {tool_name} not found in registry after deployment'
+                }
+            
+            # Try to get the tool instance
+            tool_instance = self.tool_registry.get_tool(tool_name)
+            if not tool_instance:
+                return {
+                    'success': False,
+                    'error': f'Failed to instantiate tool {tool_name}'
+                }
+            
+            # Verify it has required methods
+            if not hasattr(tool_instance, 'execute'):
+                return {
+                    'success': False,
+                    'error': f'Tool {tool_name} missing execute() method'
+                }
+            
+            if not hasattr(tool_instance, 'get_tool_definition'):
+                return {
+                    'success': False,
+                    'error': f'Tool {tool_name} missing get_tool_definition() method'
+                }
+            
+            return {
+                'success': True,
+                'tool_loaded': True,
+                'methods_verified': ['execute', 'get_tool_definition']
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Verification failed: {str(e)}'
+            }
     
     def rollback_improvement(self, tool_name: str, reason: str) -> Dict[str, Any]:
         """
         Rollback a deployed improvement.
+        
+        Two modes:
+        1. Real rollback (enable_real_improvements=True): Restores from backup
+        2. Simulated rollback (default): Returns rollback metadata
+        
+        Real rollback process:
+        1. Find the most recent backup for this tool
+        2. Restore backup file to original location
+        3. Refresh tool registry
+        4. Verify restoration worked
         
         Args:
             tool_name: Name of tool to rollback
@@ -842,10 +1106,110 @@ Generate the complete improved tool code following the BaseTool pattern."""
         """
         self.rollback_count += 1
         
+        # MODE 1: Real rollback
+        if self.enable_real_improvements:
+            return self._rollback_real_improvement(tool_name, reason)
+        
+        # MODE 2: Simulated rollback
+        return self._rollback_simulated_improvement(tool_name, reason)
+    
+    def _rollback_real_improvement(self, tool_name: str, reason: str) -> Dict[str, Any]:
+        """
+        Actually rollback the tool by restoring from backup.
+        """
+        try:
+            # Find the most recent deployment for this tool
+            tool_deployments = [
+                dep for dep in self.improvements_deployed
+                if dep['tool_name'] == tool_name and dep.get('mode') == 'real'
+            ]
+            
+            if not tool_deployments:
+                return {
+                    'success': False,
+                    'error': f'No real deployment found for {tool_name}'
+                }
+            
+            latest_deployment = tool_deployments[-1]
+            backup_path = latest_deployment.get('backup_path')
+            
+            if not backup_path or not os.path.exists(backup_path):
+                return {
+                    'success': False,
+                    'error': f'Backup file not found: {backup_path}'
+                }
+            
+            # Get target file path
+            target_file = latest_deployment.get('file_path')
+            if not target_file:
+                target_file = self._find_tool_file(tool_name)
+            
+            if not target_file:
+                return {
+                    'success': False,
+                    'error': f'Could not find target file for {tool_name}'
+                }
+            
+            # Restore from backup
+            if not self._restore_backup(backup_path, target_file):
+                return {
+                    'success': False,
+                    'error': 'Failed to restore backup file'
+                }
+            
+            # Refresh tool registry
+            if self.tool_registry:
+                try:
+                    self.tool_registry.refresh()
+                except Exception as e:
+                    return {
+                        'success': False,
+                        'error': f'Tool registry refresh failed after rollback: {str(e)}'
+                    }
+            
+            # Verify rollback
+            verification = self._verify_tool_deployment(tool_name)
+            if not verification['success']:
+                return {
+                    'success': False,
+                    'error': f'Rollback verification failed: {verification["error"]}'
+                }
+            
+            rollback = {
+                'tool_name': tool_name,
+                'rolled_back_at': datetime.now().isoformat(),
+                'reason': reason,
+                'mode': 'real',
+                'status': 'rolled_back',
+                'backup_restored': backup_path,
+                'target_file': target_file,
+                'verification': verification
+            }
+            
+            self.improvements_rejected.append(rollback)
+            
+            return {
+                'success': True,
+                'tool_name': tool_name,
+                'rollback': rollback,
+                'message': f'Successfully rolled back {tool_name} from backup'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Rollback failed: {str(e)}'
+            }
+    
+    def _rollback_simulated_improvement(self, tool_name: str, reason: str) -> Dict[str, Any]:
+        """
+        Simulate rollback (for testing).
+        """
         rollback = {
             'tool_name': tool_name,
             'rolled_back_at': datetime.now().isoformat(),
             'reason': reason,
+            'mode': 'simulated',
             'status': 'rolled_back'
         }
         
@@ -855,7 +1219,7 @@ Generate the complete improved tool code following the BaseTool pattern."""
             'success': True,
             'tool_name': tool_name,
             'rollback': rollback,
-            'message': f'Rolled back {tool_name}: {reason}'
+            'message': f'Simulated rollback of {tool_name}: {reason}'
         }
     
     def run_improvement_cycle(self) -> Dict[str, Any]:
