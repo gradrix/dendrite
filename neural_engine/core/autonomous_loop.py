@@ -23,6 +23,7 @@ import time
 
 from neural_engine.core.shadow_tester import ShadowTester, ShadowTestRecommender
 from neural_engine.core.replay_tester import ReplayTester, ReplayTestRecommender
+from neural_engine.core.deployment_monitor import DeploymentMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,12 @@ class AutonomousLoop:
         self.shadow_tester = ShadowTester(execution_store=execution_store)
         self.replay_tester = ReplayTester(execution_store=execution_store)
         
+        # Initialize deployment monitor
+        self.deployment_monitor = DeploymentMonitor(
+            execution_store=execution_store,
+            tool_registry=orchestrator.tool_registry if orchestrator else None
+        )
+        
         # Statistics
         self.stats = {
             'cycles_completed': 0,
@@ -86,6 +93,7 @@ class AutonomousLoop:
             'improvements_attempted': 0,
             'improvements_deployed': 0,
             'improvements_failed': 0,
+            'rollbacks_triggered': 0,
             'tools_analyzed': 0,
             'maintenance_runs': 0
         }
@@ -112,20 +120,23 @@ class AutonomousLoop:
                 # 1. Run periodic maintenance if needed
                 await self._check_maintenance()
                 
-                # 2. Detect improvement opportunities
+                # 2. Check health of deployed improvements and auto-rollback if needed
+                await self._check_deployment_health()
+                
+                # 3. Detect improvement opportunities
                 opportunities = await self._detect_opportunities()
                 
-                # 3. Process opportunities
+                # 4. Process opportunities
                 if opportunities:
                     await self._process_opportunities(opportunities)
                 else:
                     logger.info("No improvement opportunities detected in this cycle.")
                 
-                # 4. Update statistics
+                # 5. Update statistics
                 self.stats['cycles_completed'] += 1
                 self.last_check = datetime.now()
                 
-                # 5. Wait before next cycle
+                # 6. Wait before next cycle
                 cycle_duration = time.time() - cycle_start
                 logger.info(f"\nCycle completed in {cycle_duration:.2f}s")
                 logger.info(f"Stats: {self.stats}")
@@ -145,6 +156,83 @@ class AutonomousLoop:
         """Stop the autonomous loop."""
         logger.info("Stopping autonomous loop...")
         self.running = False
+    
+    async def _check_deployment_health(self):
+        """
+        Check health of recently deployed tools and auto-rollback if needed.
+        
+        This runs periodically to monitor tools that were recently improved.
+        If a regression is detected, automatically rolls back to previous version.
+        """
+        try:
+            # Get active monitoring sessions from database
+            conn = self.execution_store._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    # Get sessions that need checking (deployed in last 24-48 hours)
+                    cursor.execute("""
+                        SELECT session_id, tool_name, deployment_time
+                        FROM deployment_monitoring
+                        WHERE status = 'active'
+                          AND deployment_time > NOW() - INTERVAL '48 hours'
+                        ORDER BY deployment_time DESC
+                        LIMIT 10
+                    """)
+                    
+                    sessions = cursor.fetchall()
+                    
+                    if not sessions:
+                        return  # No active monitoring sessions
+                    
+                    logger.info(f"\n🏥 Checking health of {len(sessions)} recently deployed tools...")
+                    
+                    for session_id, tool_name, deployment_time in sessions:
+                        try:
+                            # Check health and auto-rollback if needed
+                            result = self.deployment_monitor.auto_rollback_if_needed(
+                                tool_name=tool_name,
+                                session_id=session_id
+                            )
+                            
+                            if result.get('rollback_performed'):
+                                logger.warning(f"   🚨 AUTO-ROLLBACK: {tool_name}")
+                                self.stats['rollbacks_triggered'] += 1
+                                
+                                # Mark session as rolled back
+                                cursor.execute("""
+                                    UPDATE deployment_monitoring
+                                    SET status = 'rolled_back',
+                                        completed_at = NOW(),
+                                        notes = %s
+                                    WHERE session_id = %s
+                                """, (
+                                    f"Auto-rollback triggered: {result['comparison'].get('regression_severity')} severity",
+                                    session_id
+                                ))
+                                conn.commit()
+                            elif not result.get('needs_rollback'):
+                                # Check if monitoring window has passed
+                                hours_since = (datetime.now() - deployment_time).total_seconds() / 3600
+                                if hours_since > self.deployment_monitor.monitoring_window_hours:
+                                    # Mark as completed successfully
+                                    cursor.execute("""
+                                        UPDATE deployment_monitoring
+                                        SET status = 'completed',
+                                            completed_at = NOW(),
+                                            notes = 'Monitoring completed successfully - no regressions detected'
+                                        WHERE session_id = %s
+                                    """, (session_id,))
+                                    conn.commit()
+                                    logger.info(f"   ✅ {tool_name}: Monitoring completed successfully")
+                        
+                        except Exception as e:
+                            logger.error(f"   Error checking {tool_name}: {e}")
+            
+            finally:
+                self.execution_store._release_connection(conn)
+        
+        except Exception as e:
+            logger.error(f"Error in deployment health check: {e}")
     
     async def _check_maintenance(self):
         """Run periodic maintenance tasks."""
@@ -326,12 +414,23 @@ class AutonomousLoop:
                 if deploy_result and deploy_result.get('success'):
                     logger.info("   ✅ Improvement deployed successfully!")
                     self.stats['improvements_deployed'] += 1
+                    
+                    # 5. Start post-deployment monitoring
+                    logger.info("\n5️⃣  Starting post-deployment monitoring...")
+                    tool_name = opportunity.get('tool_name')
+                    if tool_name:
+                        try:
+                            session_id = self.deployment_monitor.start_monitoring(
+                                tool_name=tool_name,
+                                deployment_time=datetime.now()
+                            )
+                            logger.info(f"   Monitoring session: {session_id}")
+                            logger.info(f"   Will auto-rollback if regression detected")
+                        except Exception as e:
+                            logger.error(f"   Failed to start monitoring: {e}")
                 else:
                     logger.info("   ❌ Deployment failed.")
                     self.stats['improvements_failed'] += 1
-                
-                # 5. Schedule post-deployment monitoring (TODO: Phase 9d)
-                # This will track success rate after deployment and auto-rollback if needed
                 
             except Exception as e:
                 logger.error(f"Error processing opportunity: {e}", exc_info=True)

@@ -1,5 +1,7 @@
 # Project Roadmap
 
+> **⚠️ Note**: This document contains the original architectural vision. For current project status, completed phases, and next steps, see **[docs/MASTER_ROADMAP.md](./docs/MASTER_ROADMAP.md)**.
+
 This document outlines the architectural vision and future development direction for the Neural Engine project. It is based on the collaborative design sessions between the developer and the AI agent, Jules.
 
 ## Core Philosophy: The "Lego Brick" Approach
