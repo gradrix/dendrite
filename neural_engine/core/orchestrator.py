@@ -5,6 +5,7 @@ from neural_engine.core.intent_classifier_neuron import IntentClassifierNeuron
 from neural_engine.core.generative_neuron import GenerativeNeuron
 from neural_engine.core.tool_registry import ToolRegistry
 from neural_engine.core.execution_store import ExecutionStore
+from neural_engine.core.tool_discovery import ToolDiscovery
 
 class Orchestrator:
     def __init__(self, intent_classifier=None, tool_selector=None, code_generator=None, 
@@ -12,13 +13,15 @@ class Orchestrator:
                  neuron_registry: Optional[Dict[str, BaseNeuron]] = None, 
                  tool_registry: Optional[ToolRegistry] = None,
                  execution_store: Optional[ExecutionStore] = None,
+                 tool_discovery: Optional[ToolDiscovery] = None,
+                 enable_semantic_search: bool = True,
                  max_depth=10):
         """Initialize Orchestrator with either individual neurons or a neuron registry.
         
         New API (Phase 6+): Pass individual neurons:
             Orchestrator(intent_classifier=..., tool_selector=..., code_generator=..., 
                         generative_neuron=..., message_bus=..., sandbox=..., 
-                        execution_store=...)
+                        execution_store=..., tool_discovery=...)
         
         Old API (Phases 0-5): Pass neuron_registry and tool_registry:
             Orchestrator(neuron_registry={...}, tool_registry=..., message_bus=...)
@@ -26,6 +29,9 @@ class Orchestrator:
         Args:
             execution_store: Optional ExecutionStore for logging executions.
                            If None and PostgreSQL is available, creates one automatically.
+            tool_discovery: Optional ToolDiscovery for semantic tool search (Phase 8d).
+                          If None and enable_semantic_search=True, creates one automatically.
+            enable_semantic_search: If True, enables 3-stage tool discovery (default: True)
         """
         # Support both old and new initialization patterns
         if neuron_registry is not None:
@@ -64,6 +70,24 @@ class Orchestrator:
                 # If PostgreSQL is not available, continue without logging
                 print(f"Warning: ExecutionStore not available: {e}")
                 self.execution_store = None
+        
+        # Initialize ToolDiscovery for semantic search (Phase 8d)
+        self.tool_discovery = tool_discovery
+        if self.tool_discovery is None and enable_semantic_search and self.execution_store:
+            try:
+                # Auto-create ToolDiscovery with execution_store
+                # Get tool_registry from ToolSelectorNeuron if available
+                if self.tool_selector and hasattr(self.tool_selector, 'tool_registry'):
+                    self.tool_discovery = ToolDiscovery(
+                        tool_registry=self.tool_selector.tool_registry,
+                        execution_store=self.execution_store
+                    )
+                    # Index all tools on initialization
+                    self.tool_discovery.index_all_tools()
+                    print(f"✓ Semantic tool discovery enabled ({self.tool_discovery.collection.count()} tools indexed)")
+            except Exception as e:
+                print(f"Warning: ToolDiscovery not available: {e}")
+                self.tool_discovery = None
     
     def process(self, goal: str, goal_id: Optional[str] = None, depth=0):
         """Process a user goal through the complete pipeline.
@@ -120,8 +144,13 @@ class Orchestrator:
         return self.neuron_registry["generative"].process(goal_id, data, depth)
 
     def _execute_tool_use_pipeline(self, goal_id, data, depth):
-        # 1. Select the tool
+        # 1. Select the tool (with optional semantic search)
         tool_selector = self.neuron_registry["tool_selector"]
+        
+        # If ToolDiscovery was created but ToolSelectorNeuron doesn't have it yet, inject it
+        if self.tool_discovery and not hasattr(tool_selector, 'tool_discovery'):
+            tool_selector.tool_discovery = self.tool_discovery
+        
         tool_selection_data = tool_selector.process(goal_id, data['goal'], depth)
 
         # 2. Generate the code
