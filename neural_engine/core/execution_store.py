@@ -357,6 +357,61 @@ class ExecutionStore:
                 return result[0] if result else 0.0
         finally:
             self._release_connection(conn)
+    def mark_tool_status(self, tool_name: str, status: str, reason: Optional[str] = None):
+        """
+        Mark a tool with a new status (active | deleted | archived).
+        
+        Args:
+            tool_name: Name of the tool
+            status: New status ('active', 'deleted', 'archived')
+            reason: Optional reason for status change
+        """
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                # Update status in tool_creation_events
+                cursor.execute("""
+                    UPDATE tool_creation_events
+                    SET status = %s,
+                        status_changed_at = NOW(),
+                        status_reason = %s
+                    WHERE tool_name = %s
+                """, (status, reason, tool_name))
+                
+                # Log lifecycle event
+                cursor.execute("""
+                    INSERT INTO tool_lifecycle_events (
+                        tool_name, event_type, reason, triggered_by
+                    ) VALUES (%s, %s, %s, %s)
+                """, (tool_name, status, reason, 'system'))
+                
+                conn.commit()
+        finally:
+            self._release_connection(conn)
+    
+    def get_tools_by_status(self, status: str) -> List[Dict]:
+        """
+        Get all tools with a specific status.
+        
+        Args:
+            status: Status to filter by ('active', 'deleted', 'archived')
+        
+        Returns:
+            List of tool records
+        """
+        conn = self._get_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT tool_name, tool_class, status, 
+                           created_at, status_changed_at, status_reason
+                    FROM tool_creation_events
+                    WHERE status = %s
+                    ORDER BY created_at DESC
+                """, (status,))
+                return [dict(row) for row in cursor.fetchall()]
+        finally:
+            self._release_connection(conn)
     
     def close(self):
         """Close all connections in pool."""
