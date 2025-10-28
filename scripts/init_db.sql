@@ -109,9 +109,11 @@ FROM tool_executions te
 GROUP BY te.tool_name;
 
 -- Create function to update tool statistics (called periodically)
+-- Function to update tool statistics (trigger function)
 CREATE OR REPLACE FUNCTION update_tool_statistics()
-RETURNS void AS $$
+RETURNS TRIGGER AS $$
 BEGIN
+    -- Recalculate statistics for the affected tool
     INSERT INTO tool_statistics (
         tool_name, 
         total_executions, 
@@ -132,6 +134,7 @@ BEGIN
         MIN(created_at) as first_used,
         NOW() as updated_at
     FROM tool_executions
+    WHERE tool_name = NEW.tool_name
     GROUP BY tool_name
     ON CONFLICT (tool_name) 
     DO UPDATE SET
@@ -141,8 +144,16 @@ BEGIN
         avg_duration_ms = EXCLUDED.avg_duration_ms,
         last_used = EXCLUDED.last_used,
         updated_at = NOW();
+    
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Create trigger to automatically update tool_statistics
+CREATE TRIGGER update_tool_statistics_trigger
+    AFTER INSERT OR UPDATE ON tool_executions
+    FOR EACH ROW
+    EXECUTE FUNCTION update_tool_statistics();
 
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO dendrite;

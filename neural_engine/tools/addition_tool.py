@@ -3,7 +3,7 @@ import math
 
 class AdditionTool(BaseTool):
     """
-    A simple tool to add two numbers together.
+    A tool to add two numbers.
     """
 
     def get_tool_definition(self):
@@ -11,24 +11,26 @@ class AdditionTool(BaseTool):
             "name": "addition",  # snake_case, no "Tool" suffix
             "description": "Adds two numbers",
             "parameters": [
-                {"name": "num1", "type": "float", "description": "First number", "required": True},
-                {"name": "num2", "type": "float", "description": "Second number", "required": True}
+                {"name": "number1", "type": "float", "description": "First number", "required": True},
+                {"name": "number2", "type": "float", "description": "Second number", "required": True}
             ]
         }
 
     def execute(self, **kwargs):
         """
-        Execute the tool with given parameters.
+        Execute the addition tool with given parameters.
         """
         try:
-            num1 = kwargs.get('num1', 0.0)
-            num2 = kwargs.get('num2', 0.0)
-
+            # Extract parameters
+            number1 = kwargs.get('number1')
+            number2 = kwargs.get('number2')
+            
             # Validate required parameters
-            if not (num1 and num2):
-                return {"error": "Missing required parameter(s)"}
-
-            result = num1 + num2
+            if not number1 or not number2:
+                return {"error": "Missing required parameter(s): number1 and number2"}
+            
+            # Do the work
+            result = number1 + number2
 
             # Return result
             return {"result": result}

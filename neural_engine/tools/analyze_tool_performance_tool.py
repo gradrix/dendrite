@@ -34,6 +34,7 @@ class AnalyzeToolPerformanceTool(BaseTool):
             execution_store: ExecutionStore instance (creates new if None)
         """
         super().__init__()
+        self._owns_store = execution_store is None
         self.execution_store = execution_store or ExecutionStore()
         
         # Map analysis types to handler methods
@@ -420,6 +421,6 @@ class AnalyzeToolPerformanceTool(BaseTool):
         return recommendations
     
     def close(self):
-        """Close ExecutionStore connection."""
-        if self.execution_store:
+        """Close ExecutionStore connection if we own it."""
+        if self._owns_store and self.execution_store:
             self.execution_store.close()
