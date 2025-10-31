@@ -125,8 +125,9 @@ Respond in JSON:
         try:
             response = self.ollama_client.generate(prompt)
             
-            # Extract JSON from response
-            json_str = response.strip()
+            # Extract JSON from response (ollama returns dict with 'response' key)
+            json_str = response.get('response', response) if isinstance(response, dict) else response
+            json_str = json_str.strip() if isinstance(json_str, str) else str(json_str)
             if "```json" in json_str:
                 json_str = json_str.split("```json")[1].split("```")[0].strip()
             elif "```" in json_str:
@@ -272,12 +273,12 @@ Respond in JSON:
         
         # Try again with same parameters
         try:
-            tool_class = self.tool_registry.get_tool(tool_name)
-            if tool_class is None:
+            tool = self.tool_registry.get_tool(tool_name)
+            if tool is None:
                 raise Exception(f"Tool {tool_name} not found in registry")
             
-            tool_instance = tool_class()
-            result = tool_instance.execute(**parameters)
+            # Tool registry returns instances, not classes
+            result = tool.execute(**parameters)
             
             print(f"✅ Retry succeeded!")
             
@@ -380,9 +381,9 @@ Respond in JSON:
         
         print(f"🔧 Adapting parameters based on error...")
         
-        # Get tool schema
-        tool_class = self.tool_registry.get_tool(tool_name)
-        if tool_class is None:
+        # Get tool (registry returns instances, not classes)
+        tool = self.tool_registry.get_tool(tool_name)
+        if tool is None:
             return {
                 "success": False,
                 "strategy": "adapt",
@@ -392,7 +393,7 @@ Respond in JSON:
                 "next_action": None
             }
         
-        tool_params = getattr(tool_class, 'parameters', {})
+        tool_params = getattr(tool, 'parameters', {})
         
         # Ask LLM to fix parameters
         prompt = f"""Fix the parameters for this tool based on the error.
@@ -417,8 +418,9 @@ Example response:
         try:
             response = self.ollama_client.generate(prompt)
             
-            # Extract JSON
-            json_str = response.strip()
+            # Extract JSON (ollama returns dict with 'response' key)
+            json_str = response.get('response', response) if isinstance(response, dict) else response
+            json_str = json_str.strip() if isinstance(json_str, str) else str(json_str)
             if "```json" in json_str:
                 json_str = json_str.split("```json")[1].split("```")[0].strip()
             elif "```" in json_str:
@@ -430,8 +432,8 @@ Example response:
             
             # Try with fixed parameters
             try:
-                tool_instance = tool_class()
-                result = tool_instance.execute(**fixed_parameters)
+                # Tool registry returns instances, not classes
+                result = tool.execute(**fixed_parameters)
                 
                 print(f"✅ Adaptation succeeded!")
                 
@@ -502,8 +504,9 @@ Example: "I cannot complete this task because the resource you're trying to acce
 """
 
         try:
-            explanation = self.ollama_client.generate(prompt)
-            explanation = explanation.strip().strip('"').strip("'")
+            response = self.ollama_client.generate(prompt)
+            explanation = response.get('response', response) if isinstance(response, dict) else response
+            explanation = explanation.strip().strip('"').strip("'") if isinstance(explanation, str) else str(explanation)
         except:
             explanation = f"Cannot complete task: {classification['reasoning']}"
         

@@ -7,6 +7,8 @@ from neural_engine.core.tool_registry import ToolRegistry
 from neural_engine.core.execution_store import ExecutionStore
 from neural_engine.core.tool_discovery import ToolDiscovery
 from neural_engine.core.tool_lifecycle_manager import ToolLifecycleManager
+from neural_engine.core.error_recovery_neuron import ErrorRecoveryNeuron
+from neural_engine.core.ollama_client import OllamaClient
 
 class Orchestrator:
     def __init__(self, intent_classifier=None, tool_selector=None, code_generator=None, 
@@ -16,8 +18,10 @@ class Orchestrator:
                  execution_store: Optional[ExecutionStore] = None,
                  tool_discovery: Optional[ToolDiscovery] = None,
                  lifecycle_manager: Optional[ToolLifecycleManager] = None,
+                 error_recovery: Optional[ErrorRecoveryNeuron] = None,
                  enable_semantic_search: bool = True,
                  enable_lifecycle_sync: bool = True,
+                 enable_error_recovery: bool = True,
                  max_depth=10):
         """Initialize Orchestrator with either individual neurons or a neuron registry.
         
@@ -36,8 +40,11 @@ class Orchestrator:
                           If None and enable_semantic_search=True, creates one automatically.
             lifecycle_manager: Optional ToolLifecycleManager for autonomous tool lifecycle (Phase 9d).
                              If None and enable_lifecycle_sync=True, creates one automatically.
+            error_recovery: Optional ErrorRecoveryNeuron for intelligent error recovery (Phase 10d).
+                          If None and enable_error_recovery=True, creates one automatically.
             enable_semantic_search: If True, enables 3-stage tool discovery (default: True)
             enable_lifecycle_sync: If True, enables autonomous tool lifecycle management (default: True)
+            enable_error_recovery: If True, enables intelligent error recovery (default: True)
         """
         # Support both old and new initialization patterns
         if neuron_registry is not None:
@@ -119,6 +126,37 @@ class Orchestrator:
             except Exception as e:
                 print(f"Warning: ToolLifecycleManager not available: {e}")
                 self.lifecycle_manager = None
+        
+        # Initialize ErrorRecoveryNeuron for intelligent error recovery (Phase 10d)
+        self.error_recovery = error_recovery
+        if self.error_recovery is None and enable_error_recovery:
+            try:
+                # Auto-create ErrorRecoveryNeuron
+                ollama_client = None
+                tool_reg = None
+                
+                # Get OllamaClient from generative_neuron if available
+                if self.generative_neuron and hasattr(self.generative_neuron, 'ollama_client'):
+                    ollama_client = self.generative_neuron.ollama_client
+                elif self.intent_classifier and hasattr(self.intent_classifier, 'ollama_client'):
+                    ollama_client = self.intent_classifier.ollama_client
+                else:
+                    ollama_client = OllamaClient()
+                
+                # Get tool_registry from tool_selector if available
+                if self.tool_selector and hasattr(self.tool_selector, 'tool_registry'):
+                    tool_reg = self.tool_selector.tool_registry
+                
+                if ollama_client and tool_reg:
+                    self.error_recovery = ErrorRecoveryNeuron(
+                        ollama_client=ollama_client,
+                        tool_registry=tool_reg,
+                        execution_store=self.execution_store
+                    )
+                    print(f"✓ Error recovery enabled (retry, fallback, adapt strategies)")
+            except Exception as e:
+                print(f"Warning: ErrorRecoveryNeuron not available: {e}")
+                self.error_recovery = None
     
     def process(self, goal: str, goal_id: Optional[str] = None, depth=0):
         """Process a user goal through the complete pipeline.
@@ -188,10 +226,21 @@ class Orchestrator:
         code_generator = self.neuron_registry["code_generator"]
         code_generation_data = code_generator.process(goal_id, tool_selection_data, depth)
 
-        # 3. Execute the code in the sandbox
+        # 3. Execute the code in the sandbox (with error recovery if enabled)
         # Support both "code" and "generated_code" keys
         code = code_generation_data.get("generated_code") or code_generation_data.get("code")
         sandbox = self.neuron_registry["sandbox"]
+        
+        # Inject error recovery into sandbox if available
+        if self.error_recovery and not hasattr(sandbox, 'error_recovery'):
+            sandbox.error_recovery = self.error_recovery
+            sandbox.error_recovery_context = {
+                'goal': data.get('goal', ''),
+                'tool_name': tool_selection_data.get('tool_name', 'unknown'),
+                'goal_id': goal_id,
+                'depth': depth
+            }
+        
         execution_result = sandbox.execute(code, goal_id=goal_id, depth=depth)
 
         return execution_result

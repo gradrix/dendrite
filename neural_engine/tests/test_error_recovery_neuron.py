@@ -85,10 +85,10 @@ class TestErrorRecoveryNeuron(unittest.TestCase):
         )
     
     def _mock_get_tool(self, tool_name):
-        """Mock tool registry get_tool"""
+        """Mock tool registry get_tool - returns instances like real registry"""
         tools = {
-            "mock_transient_tool": MockTransientTool,
-            "mock_parameter_tool": MockParameterTool
+            "mock_transient_tool": MockTransientTool(),
+            "mock_parameter_tool": MockParameterTool()
         }
         return tools.get(tool_name)
     

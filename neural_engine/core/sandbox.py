@@ -22,6 +22,9 @@ class Sandbox:
     def execute(self, code: str, data_handles: dict = None, goal_id: str = None, depth: int = 0) -> dict:
         """
         Executes the given Python code in a sandboxed environment.
+        
+        Phase 10d: Now with intelligent error recovery!
+        If execution fails and error_recovery is available, attempts to recover.
         """
         environment = {
             'sandbox': self
@@ -30,12 +33,49 @@ class Sandbox:
             environment.update(self._prepare_environment(data_handles))
 
         self._result = None
+        attempt_history = []
 
         try:
             exec(code, environment)
             result = {"success": True, "result": self._result, "error": None}
         except Exception as e:
-            result = {"success": False, "result": None, "error": str(e)}
+            # Phase 10d: Attempt error recovery if available
+            if hasattr(self, 'error_recovery') and self.error_recovery and hasattr(self, 'error_recovery_context'):
+                print(f"\n⚠️  Tool execution failed: {e}")
+                print(f"🔄 Attempting error recovery...")
+                
+                # Attempt recovery
+                recovery_result = self.error_recovery.recover(
+                    error=e,
+                    tool_name=self.error_recovery_context.get('tool_name', 'unknown'),
+                    parameters={},  # Parameters are embedded in code, hard to extract
+                    context=self.error_recovery_context,
+                    attempt_history=attempt_history
+                )
+                
+                if recovery_result['success']:
+                    print(f"✅ Recovery successful via {recovery_result['strategy']} strategy")
+                    result = {
+                        "success": True,
+                        "result": recovery_result['result'],
+                        "error": None,
+                        "recovered": True,
+                        "recovery_strategy": recovery_result['strategy'],
+                        "recovery_explanation": recovery_result['explanation']
+                    }
+                else:
+                    print(f"❌ Recovery failed: {recovery_result['explanation']}")
+                    result = {
+                        "success": False,
+                        "result": None,
+                        "error": str(e),
+                        "recovery_attempted": True,
+                        "recovery_strategy": recovery_result['strategy'],
+                        "recovery_explanation": recovery_result['explanation']
+                    }
+            else:
+                # No error recovery available - return error as before
+                result = {"success": False, "result": None, "error": str(e)}
         
         # Store execution result in message bus if goal_id provided
         if goal_id:
