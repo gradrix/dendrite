@@ -232,8 +232,8 @@ BEGIN
             AND (failure_count::float / NULLIF(success_count + failure_count, 0)) > 0.30;
     END IF;
     
-    GET DIAGNOSTICS v_updated = ROW_COUNT > 0;
-    RETURN v_updated;
+    GET DIAGNOSTICS v_updated = ROW_COUNT;
+    RETURN (v_updated > 0);
 END;
 $$ LANGUAGE plpgsql;
 

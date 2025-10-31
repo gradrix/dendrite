@@ -23,7 +23,7 @@ services:
       - redis_data:/data
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: dendrite
       POSTGRES_USER: dendrite
@@ -32,7 +32,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init_db.sql
+      - ./scripts/init_extensions.sql:/docker-entrypoint-initdb.d/02_init_extensions.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dendrite"]
       interval: 5s
