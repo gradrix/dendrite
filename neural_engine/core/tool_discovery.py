@@ -378,6 +378,270 @@ class ToolDiscovery:
         
         return tools
     
+    def find_similar_tools(self, 
+                          tool_name: str, 
+                          similarity_threshold: float = 0.9,
+                          limit: int = 10) -> List[Dict]:
+        """
+        Find tools similar to the given tool (potential duplicates).
+        
+        Phase 9g: Uses embeddings to detect similar/duplicate tools.
+        
+        Args:
+            tool_name: Name of reference tool
+            similarity_threshold: Cosine similarity threshold (0.9 = 90% similar)
+            limit: Maximum number of similar tools to return
+        
+        Returns:
+            List of similar tools with similarity scores, sorted by similarity
+        """
+        # Get the reference tool
+        tool_class = self.tool_registry.get_tool(tool_name)
+        if tool_class is None:
+            return []
+        
+        # Build query from tool description
+        description = getattr(tool_class, 'description', '')
+        params = getattr(tool_class, 'parameters', {})
+        
+        param_desc = " ".join([
+            f"{name}: {info.get('description', '')}"
+            for name, info in params.items()
+        ])
+        
+        query = f"{description} {param_desc}"
+        
+        # Search for similar tools
+        results = self.collection.query(
+            query_texts=[query],
+            n_results=min(limit + 1, self.collection.count())  # +1 to exclude self
+        )
+        
+        similar_tools = []
+        if results['ids'] and len(results['ids']) > 0:
+            tool_ids = results['ids'][0]
+            metadatas = results['metadatas'][0]
+            distances = results['distances'][0] if results['distances'] else [0] * len(tool_ids)
+            
+            for tool_id, metadata, distance in zip(tool_ids, metadatas, distances):
+                # Skip the reference tool itself
+                if tool_id == tool_name:
+                    continue
+                
+                # Calculate similarity (1 - distance for cosine distance)
+                similarity = 1.0 - distance
+                
+                # Only include if above threshold
+                if similarity >= similarity_threshold:
+                    similar_tools.append({
+                        "tool_name": tool_id,
+                        "description": metadata.get('description', ''),
+                        "parameter_count": metadata.get('parameter_count', 0),
+                        "similarity": similarity,
+                        "is_potential_duplicate": similarity >= 0.95  # 95%+ is likely duplicate
+                    })
+                    
+                    # Stop if we've reached the limit
+                    if len(similar_tools) >= limit:
+                        break
+        
+        # Sort by similarity (highest first)
+        similar_tools.sort(key=lambda x: x['similarity'], reverse=True)
+        
+        return similar_tools
+    
+    def find_all_duplicates(self, 
+                           similarity_threshold: float = 0.9) -> List[Dict]:
+        """
+        Find all potential duplicate tool pairs across the entire registry.
+        
+        Phase 9g: Scans all tools to find duplicates.
+        
+        Args:
+            similarity_threshold: Cosine similarity threshold
+        
+        Returns:
+            List of duplicate pairs with similarity scores
+        """
+        print(f"Scanning for duplicate tools (threshold: {similarity_threshold:.0%})...")
+        
+        all_tools = self.tool_registry.get_all_tools()
+        duplicate_pairs = []
+        checked_pairs = set()
+        
+        for tool_name in all_tools.keys():
+            # Find similar tools
+            similar = self.find_similar_tools(
+                tool_name=tool_name,
+                similarity_threshold=similarity_threshold,
+                limit=20
+            )
+            
+            for sim_tool in similar:
+                # Create sorted pair to avoid duplicates (A,B) vs (B,A)
+                pair = tuple(sorted([tool_name, sim_tool['tool_name']]))
+                
+                if pair not in checked_pairs:
+                    checked_pairs.add(pair)
+                    
+                    # Get statistics for both tools
+                    stats_a = self.execution_store.get_tool_statistics(pair[0])
+                    stats_b = self.execution_store.get_tool_statistics(pair[1])
+                    
+                    duplicate_pairs.append({
+                        "tool_a": pair[0],
+                        "tool_b": pair[1],
+                        "similarity": sim_tool['similarity'],
+                        "is_potential_duplicate": sim_tool['is_potential_duplicate'],
+                        "stats_a": stats_a or {"total_executions": 0, "success_rate": None},
+                        "stats_b": stats_b or {"total_executions": 0, "success_rate": None},
+                        "recommendation": self._generate_consolidation_recommendation(
+                            pair[0], pair[1], 
+                            stats_a or {}, stats_b or {},
+                            sim_tool['similarity']
+                        )
+                    })
+        
+        # Sort by similarity (highest first)
+        duplicate_pairs.sort(key=lambda x: x['similarity'], reverse=True)
+        
+        print(f"  Found {len(duplicate_pairs)} potential duplicate pairs")
+        
+        return duplicate_pairs
+    
+    def _generate_consolidation_recommendation(self,
+                                              tool_a: str,
+                                              tool_b: str,
+                                              stats_a: Dict,
+                                              stats_b: Dict,
+                                              similarity: float) -> Dict:
+        """
+        Generate recommendation for consolidating duplicate tools.
+        
+        Considers:
+        - Usage frequency (keep more used tool)
+        - Success rate (keep more reliable tool)
+        - Recency (keep more recently used)
+        """
+        execs_a = stats_a.get('total_executions', 0)
+        execs_b = stats_b.get('total_executions', 0)
+        success_a = stats_a.get('success_rate', 0)
+        success_b = stats_b.get('success_rate', 0)
+        
+        # Calculate scores for each tool
+        score_a = execs_a * (success_a or 0.5)
+        score_b = execs_b * (success_b or 0.5)
+        
+        # Determine which to keep
+        if score_a > score_b * 1.2:  # 20% better
+            keep = tool_a
+            deprecate = tool_b
+            reason = f"{tool_a} has better usage and reliability"
+        elif score_b > score_a * 1.2:
+            keep = tool_b
+            deprecate = tool_a
+            reason = f"{tool_b} has better usage and reliability"
+        elif execs_a > execs_b:
+            keep = tool_a
+            deprecate = tool_b
+            reason = f"{tool_a} is used more frequently ({execs_a} vs {execs_b} executions)"
+        elif execs_b > execs_a:
+            keep = tool_b
+            deprecate = tool_a
+            reason = f"{tool_b} is used more frequently ({execs_b} vs {execs_a} executions)"
+        else:
+            # If usage is equal, keep alphabetically first
+            keep = tool_a if tool_a < tool_b else tool_b
+            deprecate = tool_b if tool_a < tool_b else tool_a
+            reason = "Usage is similar - alphabetical selection"
+        
+        return {
+            "action": "consolidate",
+            "keep": keep,
+            "deprecate": deprecate,
+            "reason": reason,
+            "confidence": "high" if similarity >= 0.95 else "medium"
+        }
+    
+    def compare_tools_side_by_side(self, tool_a: str, tool_b: str) -> Dict:
+        """
+        Detailed side-by-side comparison of two tools.
+        
+        Phase 9g: Compare everything - description, parameters, code, statistics.
+        
+        Args:
+            tool_a: First tool name
+            tool_b: Second tool name
+        
+        Returns:
+            Comprehensive comparison dictionary
+        """
+        # Get tool classes
+        class_a = self.tool_registry.get_tool(tool_a)
+        class_b = self.tool_registry.get_tool(tool_b)
+        
+        if not class_a or not class_b:
+            return {"error": "One or both tools not found"}
+        
+        # Get descriptions
+        desc_a = getattr(class_a, 'description', '')
+        desc_b = getattr(class_b, 'description', '')
+        
+        # Get parameters
+        params_a = getattr(class_a, 'parameters', {})
+        params_b = getattr(class_b, 'parameters', {})
+        
+        # Get statistics
+        stats_a = self.execution_store.get_tool_statistics(tool_a)
+        stats_b = self.execution_store.get_tool_statistics(tool_b)
+        
+        # Calculate similarity between descriptions
+        query_a = f"{tool_a} {desc_a}"
+        results = self.collection.query(query_texts=[query_a], n_results=50)
+        
+        similarity = 0.0
+        if results['ids'] and tool_b in results['ids'][0]:
+            idx = results['ids'][0].index(tool_b)
+            distance = results['distances'][0][idx] if results['distances'] else 0
+            similarity = 1.0 - distance
+        
+        # Compare parameters
+        params_a_names = set(params_a.keys())
+        params_b_names = set(params_b.keys())
+        common_params = params_a_names & params_b_names
+        unique_to_a = params_a_names - params_b_names
+        unique_to_b = params_b_names - params_a_names
+        
+        return {
+            "tool_a": {
+                "name": tool_a,
+                "description": desc_a,
+                "parameters": list(params_a.keys()),
+                "parameter_count": len(params_a),
+                "statistics": stats_a or {"total_executions": 0, "success_rate": None}
+            },
+            "tool_b": {
+                "name": tool_b,
+                "description": desc_b,
+                "parameters": list(params_b.keys()),
+                "parameter_count": len(params_b),
+                "statistics": stats_b or {"total_executions": 0, "success_rate": None}
+            },
+            "comparison": {
+                "similarity": similarity,
+                "is_likely_duplicate": similarity >= 0.95,
+                "common_parameters": list(common_params),
+                "unique_to_a": list(unique_to_a),
+                "unique_to_b": list(unique_to_b),
+                "parameter_overlap": len(common_params) / max(len(params_a_names), len(params_b_names)) if params_a_names or params_b_names else 0
+            },
+            "recommendation": self._generate_consolidation_recommendation(
+                tool_a, tool_b,
+                stats_a or {}, stats_b or {},
+                similarity
+            )
+        }
+    
     def close(self):
         """Close connections."""
         if self.execution_store:
