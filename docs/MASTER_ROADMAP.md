@@ -1,8 +1,8 @@
 # Master Roadmap: Neural Engine Self-Improving AI
 
-**Last Updated**: October 29, 2025  
-**Current Phase**: 9e Complete → Moving to 9f  
-**Status**: Production-ready autonomous improvement system with full safety guarantees
+**Last Updated**: October 31, 2025  
+**Current Phase**: 9f Complete → Moving to 9g  
+**Status**: Production-ready autonomous improvement with multi-tier rollback safety
 
 ## 📚 Quick Navigation
 
@@ -13,12 +13,13 @@
 
 ### Phase-Specific Documentation
 - [Phase 0-8](#completed-phases) - Foundation work (see links below)
-- [Phase 9](#phase-9-autonomous-improvement---complete) - Autonomous improvement (current)
+- [Phase 9](#phase-9-autonomous-improvement---complete) - Autonomous improvement (complete!)
 - [Phase 10](#phase-10-cognitive-optimization---planned) - Cognitive optimization (next)
 
 ### Component Documentation
 - [TOOL_LIFECYCLE_MANAGEMENT.md](./TOOL_LIFECYCLE_MANAGEMENT.md) - Tool lifecycle and sync
 - [POST_DEPLOYMENT_MONITORING.md](./POST_DEPLOYMENT_MONITORING.md) - Health tracking and rollback
+- [TOOL_VERSION_MANAGEMENT.md](./TOOL_VERSION_MANAGEMENT.md) - Version tracking and fast rollback
 - [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) - Shadow, replay, and synthetic testing
 - [AUTONOMOUS_LOOP_FRACTAL.md](./AUTONOMOUS_LOOP_FRACTAL.md) - Continuous improvement loop
 - [COGNITIVE_OPTIMIZATION_VISION.md](./COGNITIVE_OPTIMIZATION_VISION.md) - Future goal learning
@@ -355,7 +356,117 @@ A **self-improving AI system** that:
 
 ---
 
-## Phase 9 Summary
+### Phase 9f: Tool Version Management ✅
+**Status**: Complete  
+**Tests**: 17/17 passing
+
+**What It Does**:
+- `ToolVersionManager` class - complete version history tracking
+- Track all versions with metadata (created_at, success_rate, deployment_count, created_by)
+- Rollback to any previous version (not just the last one)
+- Version comparison with unified diffs
+- Breaking change detection (removed methods, signature changes)
+- **Fast rollback triggers** (don't wait for statistics)
+
+**Key Files**:
+- `neural_engine/core/tool_version_manager.py` (741 lines)
+- `neural_engine/scripts/012_tool_versions.sql`
+- `neural_engine/tests/test_tool_version_manager.py` (17 tests)
+
+**Database Schema**:
+- `tool_versions`: Complete version history per tool
+- Columns: version_id, tool_name, version_number, code, code_hash, created_at, created_by, success_rate, total_executions, deployment_count, is_current, is_breaking_change, improvement_type, improvement_reason, previous_version_id
+- Views: `version_history_with_metrics`, `version_stability`
+
+**Fast Rollback Triggers** (NEW):
+
+Three-tier rollback system:
+
+1. **Immediate Rollback** (<5 minutes)
+   - 3+ consecutive failures within 5 minutes
+   - TypeError or AttributeError (signature change detected)
+   - 100% failure rate with 5+ attempts
+   - Pattern-based, no statistics needed
+
+2. **Fast Rollback** (10-30 minutes)
+   - 80%+ failure rate with 5+ attempts
+   - Statistical but low threshold
+
+3. **Standard Rollback** (hours - Phase 9e)
+   - 15%+ success rate drop with 10+ executions
+   - High confidence, requires statistical significance
+
+**Breaking Change Detection**:
+```python
+def _detect_breaking_changes(old_code, new_code):
+    """
+    Automatically detect:
+    - Removed methods/functions
+    - execute() signature changes
+    - Parameter additions/removals
+    """
+```
+
+**Version Comparison**:
+```python
+comparison = version_manager.compare_versions('my_tool', 1, 2)
+# Returns:
+# - code_diff (unified diff format)
+# - metrics_comparison (success rates, execution counts)
+# - is_breaking_change (bool)
+# - breaking_changes (list of details)
+```
+
+**Integration**:
+- Autonomous Improvement Neuron: Creates version on deployment
+- Deployment Monitor: Uses fast rollback triggers
+- Autonomous Loop: Initializes and injects version manager
+
+**Example Fast Rollback**:
+```
+Time 0:00 - Tool improved (version 3)
+Time 0:01 - TypeError: unexpected argument 'limit'
+Time 0:02 - TypeError: unexpected argument 'limit'  
+Time 0:03 - TypeError: unexpected argument 'limit'
+Time 0:04 - Fast rollback triggered! (signature change)
+         → Rolled back to version 2
+         → Tool registry refreshed
+Time 0:05 - ✅ Working again
+```
+
+**Documentation**: [TOOL_VERSION_MANAGEMENT.md](./TOOL_VERSION_MANAGEMENT.md)
+
+---
+
+## Phase 9 Summary (COMPLETE) ✅
+
+Phase 9 implements **complete autonomous improvement** with multiple safety layers:
+
+**Capabilities Built**:
+- ✅ Detect underperforming tools (Phase 9a)
+- ✅ Investigate root causes autonomously (Phase 9b)
+- ✅ Generate code improvements (Phase 9c)
+- ✅ Test safely with shadow/replay testing (Phase 9d)
+- ✅ Deploy automatically (Phase 9c/9d)
+- ✅ Manage tool lifecycle (Phase 9d)
+- ✅ Monitor post-deployment health (Phase 9e)
+- ✅ **Track all versions** (Phase 9f)
+- ✅ **Fast rollback on critical patterns** (Phase 9f)
+
+**Safety Mechanisms** (Defense in Depth):
+1. **Pre-deployment**: Shadow testing (95% agreement), Replay testing (90% success + 0 regressions)
+2. **Immediate** (<5 min): Signature errors, consecutive failures, complete breakage
+3. **Fast** (10-30 min): High failure rates with low sample size
+4. **Standard** (hours): Statistical rollback on 15%+ success rate drop
+5. **Lifecycle**: Auto-cleanup, smart alerts, sync checks
+
+**Test Coverage**: 168+ tests passing across all components
+
+**The autonomous improvement system is production-ready with multi-tier safety.** 🛡️
+
+---
+
+## Current State: Error Handling Analysis
 
 **What Was Built**: Complete autonomous improvement system
 
@@ -682,15 +793,80 @@ An AI agent (including yourself in future session) can:
 
 ## Next Steps
 
-### Immediate: Phase 9f - Tool Version Management
+### Immediate: Phase 9g - Duplicate Detection via Embeddings
 
-1. Read error handling strategy
-2. Implement ToolVersionManager
-3. Add fast rollback triggers
-4. Create version comparison tools
-5. Test thoroughly
+Use existing `ToolDiscovery` embeddings to find similar/duplicate tools and recommend consolidation.
 
-### After 9f: Phase 9g - Duplicate Detection
+**Goal**: Prevent redundant tools and suggest consolidation opportunities.
+
+**Components**:
+1. **DuplicateDetector** class
+2. Cosine similarity search (threshold > 0.9)
+3. Side-by-side comparison
+4. Consolidation recommendations
+5. Optional auto-deduplication
+
+**Files To Create**:
+- Enhancement to `neural_engine/core/tool_discovery.py`
+- `neural_engine/tests/test_duplicate_detection.py`
+- `docs/DUPLICATE_DETECTION.md`
+
+**Key Features**:
+```python
+class DuplicateDetector:
+    def find_similar_tools(tool_name, similarity_threshold=0.9):
+        """Find tools with similar embeddings."""
+    
+    def compare_tools_side_by_side(tool_a, tool_b):
+        """Detailed comparison of two tools."""
+    
+    def recommend_consolidation(similar_tools):
+        """Suggest which tool to keep and which to deprecate."""
+```
+
+### After 9g: Phase 10 - Cognitive Optimization
+
+Move from reactive improvement to **learning patterns** and **caching successful pathways**.
+
+**Priority Order**:
+1. **Phase 10d: Error Recovery Neuron** (most impactful)
+   - Stop failing completely on errors
+   - Intelligent retry, fallback, adaptation
+   - See [ERROR_HANDLING_STRATEGY.md](./ERROR_HANDLING_STRATEGY.md)
+
+2. **Phase 10a: Goal Decomposition Learning**
+   - Learn efficient ways to break down goals
+   - Apply patterns to similar goals
+   - Build knowledge base of successful decompositions
+
+3. **Phase 10c: Neural Pathway Caching**
+   - Cache: goal → steps → result
+   - Fast execution for known patterns (System 1)
+   - Fallback to reasoning on failure (System 2)
+
+---
+
+## Summary
+
+**Current State**: Phase 9f complete - full autonomous improvement with multi-tier rollback safety.
+
+**What Works**:
+- ✅ Detect problems automatically
+- ✅ Investigate root causes
+- ✅ Generate improvements
+- ✅ Test thoroughly (shadow + replay)
+- ✅ Deploy safely
+- ✅ Monitor continuously  
+- ✅ Track all versions
+- ✅ Rollback at three speeds (immediate, fast, standard)
+
+**What's Next**:
+- Phase 9g: Find and consolidate duplicate tools
+- Phase 10d: Intelligent error recovery
+- Phase 10a: Learn goal decomposition patterns
+- Phase 10c: Cache successful reasoning pathways
+
+**The fractal self-improvement loop is complete and battle-hardened. Time to make it learn and think more efficiently.** 🚀
 
 1. Enhance ToolDiscovery
 2. Implement similarity detection

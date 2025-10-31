@@ -158,6 +158,7 @@ class AutonomousImprovementNeuron(BaseNeuron):
         execution_store: Optional[ExecutionStore] = None,
         tool_forge: Optional['ToolForgeNeuron'] = None,  # For real code generation
         tool_registry: Optional['ToolRegistry'] = None,  # For tool management
+        version_manager = None,  # For version tracking (Phase 9f)
         enable_auto_improvement: bool = False,  # Safety: disabled by default
         enable_real_improvements: bool = False,  # Enable real code generation (vs placeholders)
         improvement_threshold: float = 0.5,  # Only improve tools with <50% success rate
@@ -194,6 +195,7 @@ class AutonomousImprovementNeuron(BaseNeuron):
         self.execution_store = execution_store or ExecutionStore()
         self.tool_forge = tool_forge  # For real code generation
         self.tool_registry = tool_registry  # For tool management
+        self.version_manager = version_manager  # For version tracking (Phase 9f)
         self.investigator = SelfInvestigationNeuron(
             message_bus=message_bus,
             ollama_client=ollama_client,
@@ -917,6 +919,26 @@ Generate the complete improved tool code following the BaseTool pattern."""
                 'file_path': current_file,
                 'verification': verification
             }
+            
+            # Step 6: Track version (Phase 9f)
+            if self.version_manager:
+                try:
+                    investigation_report = improvement_data.get('investigation_report', {})
+                    improvement_reason = investigation_report.get('root_cause', 'Autonomous improvement')
+                    
+                    version_id = self.version_manager.create_version(
+                        tool_name=tool_name,
+                        code=generated_code,
+                        created_by='autonomous',
+                        improvement_type='autonomous_improvement',
+                        improvement_reason=improvement_reason,
+                        previous_version_id=None  # Will link to previous automatically
+                    )
+                    deployment['version_id'] = version_id
+                    print(f"   Version {version_id} created and tracked")
+                except Exception as e:
+                    print(f"   Warning: Failed to track version: {e}")
+                    # Don't fail deployment if version tracking fails
             
             self.improvements_deployed.append(deployment)
             

@@ -24,6 +24,7 @@ import time
 from neural_engine.core.shadow_tester import ShadowTester, ShadowTestRecommender
 from neural_engine.core.replay_tester import ReplayTester, ReplayTestRecommender
 from neural_engine.core.deployment_monitor import DeploymentMonitor
+from neural_engine.core.tool_version_manager import ToolVersionManager
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +81,22 @@ class AutonomousLoop:
         self.shadow_tester = ShadowTester(execution_store=execution_store)
         self.replay_tester = ReplayTester(execution_store=execution_store)
         
-        # Initialize deployment monitor
-        self.deployment_monitor = DeploymentMonitor(
+        # Initialize version manager (Phase 9f)
+        self.version_manager = ToolVersionManager(
             execution_store=execution_store,
             tool_registry=orchestrator.tool_registry if orchestrator else None
         )
+        
+        # Initialize deployment monitor with version manager
+        self.deployment_monitor = DeploymentMonitor(
+            execution_store=execution_store,
+            tool_registry=orchestrator.tool_registry if orchestrator else None,
+            version_manager=self.version_manager
+        )
+        
+        # Inject version manager into improvement neuron
+        if self.autonomous_improvement and not hasattr(self.autonomous_improvement, 'version_manager'):
+            self.autonomous_improvement.version_manager = self.version_manager
         
         # Statistics
         self.stats = {

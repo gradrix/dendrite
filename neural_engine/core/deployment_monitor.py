@@ -27,6 +27,7 @@ class DeploymentMonitor:
     def __init__(self,
                  execution_store,
                  tool_registry,
+                 version_manager=None,
                  monitoring_window_hours: int = 24,
                  baseline_window_days: int = 7,
                  regression_threshold: float = 0.15,  # 15% drop triggers rollback
@@ -37,6 +38,7 @@ class DeploymentMonitor:
         Args:
             execution_store: ExecutionStore for metrics
             tool_registry: ToolRegistry for rollback
+            version_manager: ToolVersionManager for fast rollback (optional)
             monitoring_window_hours: Hours to monitor after deployment
             baseline_window_days: Days of history to use as baseline
             regression_threshold: Success rate drop that triggers rollback (0.15 = 15%)
@@ -44,6 +46,7 @@ class DeploymentMonitor:
         """
         self.execution_store = execution_store
         self.tool_registry = tool_registry
+        self.version_manager = version_manager
         self.monitoring_window_hours = monitoring_window_hours
         self.baseline_window_days = baseline_window_days
         self.regression_threshold = regression_threshold
@@ -133,17 +136,42 @@ class DeploymentMonitor:
         
         return report
     
-    def auto_rollback_if_needed(self, tool_name: str, session_id: str = None) -> Dict[str, Any]:
+    def auto_rollback_if_needed(self, tool_name: str, session_id: str = None, check_fast_rollback: bool = True) -> Dict[str, Any]:
         """
         Check health and automatically rollback if regression detected.
+        
+        Includes both fast rollback (immediate issues) and standard rollback (statistical).
         
         Args:
             tool_name: Name of tool
             session_id: Optional monitoring session ID
+            check_fast_rollback: Whether to check fast rollback triggers
         
         Returns:
             Rollback report
         """
+        # Check for fast rollback triggers first (if version manager available)
+        if check_fast_rollback and self.version_manager:
+            needs_fast_rollback, reason, details = self.version_manager.check_immediate_rollback_needed(tool_name)
+            
+            if needs_fast_rollback:
+                logger.warning(f"🚨 FAST ROLLBACK TRIGGERED for {tool_name}!")
+                logger.warning(f"   Reason: {reason}")
+                logger.warning(f"   Details: {details}")
+                
+                # Perform immediate rollback
+                rollback_result = self._perform_fast_rollback(tool_name, reason, details)
+                
+                return {
+                    'tool_name': tool_name,
+                    'rollback_type': 'fast',
+                    'rollback_performed': True,
+                    'rollback_result': rollback_result,
+                    'trigger_reason': reason,
+                    'trigger_details': details
+                }
+        
+        # Continue with standard health check
         health = self.check_health(tool_name, session_id)
         
         if health.get('needs_rollback'):
