@@ -165,7 +165,7 @@ class ToolVersionManager:
                            tool_name: str,
                            version_id: int,
                            reason: str = None,
-                           deployed_by: str = 'autonomous') -> bool:
+                           deployed_by: str = 'autonomous') -> Dict:
         """
         Rollback tool to a specific version.
         
@@ -176,7 +176,7 @@ class ToolVersionManager:
             deployed_by: Who initiated the rollback
         
         Returns:
-            success: Whether rollback succeeded
+            Dictionary with success status and details
         """
         try:
             logger.info(f"🔄 Rolling back {tool_name} to version {version_id}")
@@ -195,7 +195,7 @@ class ToolVersionManager:
                     target = cursor.fetchone()
                     if not target:
                         logger.error(f"   Version {version_id} not found")
-                        return False
+                        return {'success': False, 'error': f'Version {version_id} not found'}
                     
                     target_version_id, target_version_number, target_code = target
                     
@@ -256,14 +256,19 @@ class ToolVersionManager:
                         self._write_version_to_filesystem(tool_name, target_code)
                         self.tool_registry.refresh()
                     
-                    return True
+                    return {
+                        'success': True,
+                        'version_id': target_version_id,
+                        'version_number': target_version_number,
+                        'tool_name': tool_name
+                    }
                     
             finally:
                 self.execution_store._release_connection(conn)
                 
         except Exception as e:
             logger.error(f"Error rolling back: {e}")
-            return False
+            return {'success': False, 'error': str(e)}
     
     def check_immediate_rollback_needed(self, tool_name: str) -> Tuple[bool, Optional[str], Optional[Dict]]:
         """
@@ -611,14 +616,23 @@ class ToolVersionManager:
         except:
             return 1
     
-    def _get_current_version(self, tool_name: str) -> Optional[Dict]:
-        """Get current version info."""
+    def get_current_version(self, tool_name: str) -> Optional[Dict]:
+        """
+        Get current version info for a tool.
+        
+        Args:
+            tool_name: Name of the tool
+        
+        Returns:
+            Dictionary with version info or None if not found
+        """
         try:
             conn = self.execution_store._get_connection()
             try:
                 with conn.cursor() as cursor:
                     cursor.execute("""
-                        SELECT version_id, version_number, code
+                        SELECT version_id, version_number, code, created_at,
+                               created_by, success_rate, total_executions, is_current
                         FROM tool_versions
                         WHERE tool_name = %s AND is_current = TRUE
                     """, (tool_name,))
@@ -628,14 +642,25 @@ class ToolVersionManager:
                         return {
                             'version_id': result[0],
                             'version_number': result[1],
-                            'code': result[2]
+                            'code': result[2],
+                            'created_at': result[3],
+                            'created_by': result[4],
+                            'success_rate': result[5],
+                            'total_executions': result[6],
+                            'is_current': result[7],
+                            'tool_name': tool_name
                         }
                     return None
                     
             finally:
                 self.execution_store._release_connection(conn)
-        except:
+        except Exception as e:
+            logger.error(f"Error getting current version for {tool_name}: {e}")
             return None
+    
+    def _get_current_version(self, tool_name: str) -> Optional[Dict]:
+        """Internal method - use get_current_version() instead."""
+        return self.get_current_version(tool_name)
     
     def _set_current_version(self, version_id: int):
         """Set a version as current (standalone)."""

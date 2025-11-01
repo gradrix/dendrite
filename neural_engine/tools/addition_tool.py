@@ -3,16 +3,16 @@ import math
 
 class AdditionTool(BaseTool):
     """
-    A tool to add two numbers.
+    Tool to add two numbers together.
     """
 
     def get_tool_definition(self):
         return {
             "name": "addition",  # snake_case, no "Tool" suffix
-            "description": "Adds two numbers",
+            "description": "Adds two numbers together.",
             "parameters": [
-                {"name": "number1", "type": "float", "description": "First number", "required": True},
-                {"name": "number2", "type": "float", "description": "Second number", "required": True}
+                {"name": "number1", "type": "float", "description": "First number to add", "required": True},
+                {"name": "number2", "type": "float", "description": "Second number to add", "required": True}
             ]
         }
 
@@ -24,13 +24,13 @@ class AdditionTool(BaseTool):
             # Extract parameters
             number1 = kwargs.get('number1')
             number2 = kwargs.get('number2')
-            
+
             # Validate required parameters
-            if not number1 or not number2:
-                return {"error": "Missing required parameter(s): number1 and number2"}
-            
+            if not (number1 and number2):
+                return {"error": "Missing required parameter(s)."}
+
             # Do the work
-            result = number1 + number2
+            result = f"Result: {number1 + number2}"
 
             # Return result
             return {"result": result}
