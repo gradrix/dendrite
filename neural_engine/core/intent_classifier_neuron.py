@@ -4,6 +4,7 @@ from .pattern_cache import PatternCache
 from .parallel_voter import ParallelVoter
 from .simple_voters import create_intent_voters
 from .semantic_intent_classifier import SemanticIntentClassifier
+from .domain_router import DomainRouter
 from typing import Optional, List, Tuple, Dict
 
 class IntentClassifierNeuron(BaseNeuron):
@@ -56,12 +57,37 @@ class IntentClassifierNeuron(BaseNeuron):
             self.pattern_cache = pattern_cache or PatternCache(cache_file=cache_file)
         else:
             self.pattern_cache = None
+        
+        # Domain router for memory detection (override LLM mistakes)
+        self.domain_router = DomainRouter()
     
     def _load_prompt(self):
         with open("neural_engine/prompts/intent_classifier_prompt.txt", "r") as f:
             return f.read()
 
     def process(self, goal_id, goal: str, depth=0):
+        # Stage 0: Domain-based override (memory domain always needs tools)
+        domain = self.domain_router.detect_domain(goal)
+        if domain == "memory":
+            # Memory operations ALWAYS require tools (memory_read/memory_write)
+            intent = "tool_use"
+            print(f"🧠 Memory domain detected: '{goal}' → tool_use (override)")
+            
+            self.add_message_with_metadata(
+                goal_id=goal_id,
+                message_type="intent",
+                data={
+                    "intent": intent,
+                    "goal": goal,
+                    "method": "domain_override",
+                    "domain": domain,
+                    "confidence": 0.99
+                },
+                depth=depth
+            )
+            
+            return {"goal": goal, "intent": intent}
+        
         # Stage 1: Check pattern cache (fastest - learned patterns)
         if self.use_pattern_cache and self.pattern_cache:
             cached_decision, cache_confidence = self.pattern_cache.lookup(

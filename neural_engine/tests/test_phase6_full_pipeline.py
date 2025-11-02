@@ -24,9 +24,11 @@ from neural_engine.core.key_value_store import KeyValueStore
 
 @pytest.fixture
 def message_bus():
-    """Message bus for storing intermediate steps."""
-    return MessageBus()
-
+    """Message bus for storing intermediate steps - fresh instance per test."""
+    bus = MessageBus()
+    yield bus
+    # Clean up is handled by clean_test_environment fixture in conftest.py
+    # No need for manual cleanup here
 
 
 @pytest.fixture
@@ -52,13 +54,23 @@ def ollama_client():
 @pytest.fixture
 def intent_classifier(message_bus, ollama_client):
     """Intent classifier neuron with isolated cache via environment variables."""
-    return IntentClassifierNeuron(message_bus, ollama_client)
+    classifier = IntentClassifierNeuron(message_bus, ollama_client)
+    yield classifier
+    # Clear caches after each test
+    if hasattr(classifier, 'pattern_cache') and classifier.pattern_cache:
+        classifier.pattern_cache.clear()
 
 
 @pytest.fixture
 def tool_selector(message_bus, ollama_client, tool_registry):
     """Tool selector neuron with isolated cache via environment variables."""
-    return ToolSelectorNeuron(message_bus, ollama_client, tool_registry)
+    selector = ToolSelectorNeuron(message_bus, ollama_client, tool_registry)
+    yield selector
+    # Clear caches after each test
+    if hasattr(selector, 'pattern_cache') and selector.pattern_cache:
+        selector.pattern_cache.clear()
+    if hasattr(selector, 'voting_selector') and selector.voting_selector:
+        selector.voting_selector.cache.clear()
 
 
 @pytest.fixture
@@ -173,7 +185,8 @@ def test_pipeline_memory_read(orchestrator, message_bus, kv_store):
     # Verify memory_read_tool was selected
     tool_messages = [m for m in messages if m.get("neuron") == "tool_selector"]
     if tool_messages:
-        selected_tools = tool_messages[0]["data"].get("selected_tools", [])
+        # Use the LAST message (most recent selection for this goal)
+        selected_tools = tool_messages[-1]["data"].get("selected_tools", [])
         tool_names = [t.get("name") for t in selected_tools]
         assert "memory_read" in tool_names
 
@@ -182,24 +195,29 @@ def test_pipeline_hello_world(orchestrator, message_bus):
     """Test: Hello world tool execution."""
     result = orchestrator.process("Say hello world")
     
-    # Should execute (either tool or generative response)
+    # Should execute successfully
     assert result is not None
     
     messages = message_bus.get_all_messages("goal_1")
     
-    # Intent classification may vary - "Say hello world" is ambiguous
+    # Intent classification should happen
     intent_messages = [m for m in messages if m.get("neuron") == "intent_classifier"]
     assert len(intent_messages) > 0
     assert intent_messages[0]["data"]["intent"] in ["tool_use", "generative"]
     
-    # If tool_use intent, verify tool selector ran
-    # NOTE: Specific tool selection depends on LLM interpretation and semantic matching
-    # The important thing is the system completes successfully
+    # If tool_use intent, verify hello_world tool was selected
     if intent_messages[0]["data"]["intent"] == "tool_use":
         tool_messages = [m for m in messages if m.get("neuron") == "tool_selector"]
         assert len(tool_messages) > 0, "Tool selector should run for tool_use intent"
+        
         selected_tools = tool_messages[0]["data"].get("selected_tools", [])
         assert len(selected_tools) > 0, "At least one tool should be selected"
+        
+        # Extract tool names
+        tool_names = [t.get("name") for t in selected_tools]
+        
+        # PROPER FIX: With voting, should select hello_world (not addition!)
+        assert "hello_world" in tool_names, f"Expected 'hello_world' tool, got: {tool_names}"
 
 
 # ============================================================================
@@ -282,10 +300,12 @@ def test_pipeline_depth_increments(intent_classifier, tool_selector, code_genera
     intent_classifier.process("goal_1", "Say hello", depth=0)
     
     # Simulate tool selector at depth 1 (called by orchestrator after intent)
-    tool_selector.process("goal_1", {"goal": "Say hello"}, depth=1)
+    # tool_selector.process now takes a string goal, not a dict
+    result = tool_selector.process("goal_1", "Say hello", depth=1)
     
     # Simulate code generator at depth 2
-    code_generator.process("goal_1", {"goal": "Say hello", "selected_tools": []}, depth=2)
+    # Pass valid tool selection data
+    code_generator.process("goal_1", result, depth=2)
     
     messages = message_bus.get_all_messages("goal_1")
     

@@ -6,7 +6,10 @@ import os
 class MessageBus:
     def __init__(self):
         host = os.environ.get("REDIS_HOST", "127.0.0.1")
-        self.redis = redis.Redis(host=host, port=6379, db=0, decode_responses=True)
+        # Use separate Redis database for tests vs production
+        # db=0 for production, db=1 for tests (set via REDIS_DB env var)
+        db = int(os.environ.get("REDIS_DB", "0"))
+        self.redis = redis.Redis(host=host, port=6379, db=db, decode_responses=True)
 
     def get_new_goal_id(self):
         return str(uuid.uuid4())

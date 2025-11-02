@@ -5,6 +5,7 @@ from .task_simplifier import TaskSimplifier
 from .pattern_cache import PatternCache
 from .domain_router import DomainRouter
 from .memory_operations_specialist import MemoryOperationsSpecialist
+from .voting_tool_selector import VotingToolSelector
 from typing import Optional, Dict, List, Tuple
 import json
 
@@ -15,6 +16,7 @@ class ToolSelectorNeuron(BaseNeuron):
                  use_simplifier: bool = True,  # Use TaskSimplifier to help small LLM
                  use_pattern_cache: bool = True,  # Use pattern cache for adaptive learning
                  use_specialists: bool = True,  # Use domain specialists for better accuracy
+                 use_voting: bool = True,  # NEW: Use per-tool LLM voting for accurate selection
                  cache_threshold: float = 0.80,  # Cosine similarity threshold for cache hits
                  cache_file: str = None,  # Path to cache file (None = use env var or default)
                  max_retries: int = 3,  # Reduced to 3 to avoid test timeouts
@@ -26,9 +28,16 @@ class ToolSelectorNeuron(BaseNeuron):
         self.use_simplifier = use_simplifier
         self.use_pattern_cache = use_pattern_cache
         self.use_specialists = use_specialists
+        self.use_voting = use_voting  # NEW: Enable voting by default
         self.cache_threshold = cache_threshold
         self.validator = ToolSelectionValidatorNeuron(max_retries=max_retries) if enable_validation else None
         self.simplifier = TaskSimplifier() if use_simplifier else None
+        
+        # Initialize voting selector (NEW!)
+        if self.use_voting:
+            self.voting_selector = VotingToolSelector(ollama_client)
+        else:
+            self.voting_selector = None
         
         # Initialize domain router and specialists
         if self.use_specialists:
@@ -56,6 +65,7 @@ class ToolSelectorNeuron(BaseNeuron):
             "simplifier_enabled": use_simplifier,
             "pattern_cache_enabled": use_pattern_cache,
             "specialists_enabled": use_specialists,
+            "voting_enabled": use_voting,  # NEW
             "total_selections": 0,
             "avg_candidates_considered": 0,
             "simplifier_narrowing_count": 0,
@@ -314,7 +324,7 @@ class ToolSelectorNeuron(BaseNeuron):
     
     def _select_tool_once(self, context: Dict, tool_definitions: Dict) -> List[Dict]:
         """
-        Select tool once (single LLM call).
+        Select tool once (single LLM call or voting).
         
         Args:
             context: May include retry_instruction for feedback-based retry,
@@ -326,6 +336,19 @@ class ToolSelectorNeuron(BaseNeuron):
             List of selected tools
         """
         goal = context["goal"]
+        
+        # NEW: Use voting if enabled (most accurate method)
+        if self.use_voting and self.voting_selector and not context.get("retry_instruction"):
+            # Voting is expensive but accurate - only use for first attempt
+            # Don't use during retries (validation failures need different approach)
+            candidate_tools = list(tool_definitions.values())
+            if candidate_tools:
+                print(f"🗳️  Using per-tool LLM voting for '{goal}' ({len(candidate_tools)} candidates)")
+                selected_tools = self.voting_selector.select_tools_by_voting(goal, candidate_tools)
+                if selected_tools:
+                    return selected_tools
+                # Fallback if voting returns nothing
+                print("⚠️  Voting returned no tools, falling back to LLM selection")
         
         # Check if we have good few-shot examples
         has_fewshot = "similar_examples_with_queries" in context and context["similar_examples_with_queries"]

@@ -47,9 +47,15 @@ def clean_test_environment(monkeypatch):
     """
     Automatically set up clean test environment for ALL tests.
     Each test gets its own temporary directory for complete isolation.
+    Clears all in-memory caches and message bus before each test.
+    
+    CRITICAL: Uses separate Redis database (db=1) to avoid deleting production data!
     """
     # Create unique temp directory for THIS test
     temp_dir = tempfile.mkdtemp(prefix="test_cache_")
+    
+    # CRITICAL: Use separate Redis database for tests (db=1, not db=0 production)
+    monkeypatch.setenv("REDIS_DB", "1")
     
     # Set environment variables for isolated storage
     monkeypatch.setenv("NEURAL_ENGINE_CACHE_DIR", temp_dir)
@@ -57,6 +63,23 @@ def clean_test_environment(monkeypatch):
     monkeypatch.setenv("NEURAL_ENGINE_PATTERN_CACHE", os.path.join(temp_dir, "pattern_cache.json"))
     monkeypatch.setenv("NEURAL_ENGINE_INTENT_CACHE", os.path.join(temp_dir, "intent_cache.json"))
     monkeypatch.setenv("NEURAL_ENGINE_TOOL_CACHE", os.path.join(temp_dir, "tool_cache.json"))
+    
+    # Clear all in-memory caches BEFORE test runs
+    from neural_engine.core.message_bus import MessageBus
+    from neural_engine.core.pattern_cache import PatternCache
+    
+    # Clear message bus (Redis-backed) - now safely in db=1 test database
+    message_bus = MessageBus()
+    # Delete all keys matching goal_* pattern in TEST database only
+    for key in message_bus.redis.keys("goal_*"):
+        message_bus.redis.delete(key)
+    
+    # Clear pattern cache (singleton)
+    pattern_cache = PatternCache()
+    pattern_cache.clear()
+    
+    # Note: VotingToolSelector cache is file-based and will be isolated
+    # by the temp_dir created above (each test gets its own directory)
     
     yield temp_dir
     
