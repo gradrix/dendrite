@@ -41,7 +41,7 @@ class ToolSelectorNeuron(BaseNeuron):
         
         # Initialize domain router and specialists
         if self.use_specialists:
-            self.domain_router = DomainRouter()
+            self.domain_router = DomainRouter(ollama_client)
             self.memory_specialist = MemoryOperationsSpecialist(message_bus, ollama_client)
         else:
             self.domain_router = None
@@ -346,7 +346,15 @@ class ToolSelectorNeuron(BaseNeuron):
                 print(f"🗳️  Using per-tool LLM voting for '{goal}' ({len(candidate_tools)} candidates)")
                 selected_tools = self.voting_selector.select_tools_by_voting(goal, candidate_tools)
                 if selected_tools:
-                    return selected_tools
+                    # Transform voting results to expected format (module_name→module, class_name→class)
+                    transformed_tools = []
+                    for tool in selected_tools:
+                        transformed_tools.append({
+                            "name": tool.get("name"),
+                            "module": tool.get("module_name"),
+                            "class": tool.get("class_name")
+                        })
+                    return transformed_tools
                 # Fallback if voting returns nothing
                 print("⚠️  Voting returned no tools, falling back to LLM selection")
         
@@ -491,7 +499,11 @@ class ToolSelectorNeuron(BaseNeuron):
                 "module": tool_info["module_name"],
                 "class": tool_info["class_name"]
             }]
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            # Failed to parse response - return empty list
+        except (json.JSONDecodeError, KeyError) as e:
+            # Failed to parse response - return empty list (JSON parsing errors are recoverable)
             print(f"⚠️  Failed to parse tool selection: {e}")
             return []
+        except ValueError as e:
+            # Tool not found - this is a critical error, re-raise it
+            # (Don't silently return empty list for missing tools)
+            raise

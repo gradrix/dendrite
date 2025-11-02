@@ -220,11 +220,18 @@ Your response:"""
         tool_description = tool.get('description', '')
         
         # Handle both parameter formats:
-        # 1. List format: ["param1", "param2"]
-        # 2. Dict format: {"required": ["param1"], "optional": ["param2"]}
+        # 1. List of strings: ["param1", "param2"]
+        # 2. List of dicts: [{"name": "param1", ...}, {"name": "param2", ...}]
+        # 3. Dict format: {"required": ["param1"], "optional": ["param2"]}
         tool_params_raw = tool.get('parameters', [])
         if isinstance(tool_params_raw, list):
-            tool_params = tool_params_raw
+            # Check if list contains dicts (tool definition format)
+            if tool_params_raw and isinstance(tool_params_raw[0], dict):
+                # Extract parameter names from dicts
+                tool_params = [p.get('name', p) for p in tool_params_raw]
+            else:
+                # Already list of strings
+                tool_params = tool_params_raw
         elif isinstance(tool_params_raw, dict):
             tool_params = tool_params_raw.get('required', [])
         else:
@@ -233,14 +240,15 @@ Your response:"""
         prompt = self._create_voting_prompt(goal, tool_name, tool_description, tool_params)
         
         try:
-            # Use temperature=0 for deterministic voting
-            response = self.ollama_client.generate(
-                prompt=prompt,
-                temperature=0,
-                max_tokens=200
+            # Use chat() with temperature=0 for deterministic voting
+            messages = [{"role": "user", "content": prompt}]
+            response = self.ollama_client.chat(
+                messages=messages,
+                options={"temperature": 0, "num_predict": 200}
             )
             
-            vote, confidence, reasoning = self._parse_vote(response)
+            vote_text = response['message']['content']
+            vote, confidence, reasoning = self._parse_vote(vote_text)
             
             return ToolVote(
                 tool_name=tool_name,
@@ -310,6 +318,14 @@ Your response:"""
         
         if not yes_votes:
             # No YES votes - return highest confidence NO vote (fallback)
+            # TODO: This is problematic! We're forcing a tool selection even when no tool
+            # is appropriate. Better approach:
+            # 1. Return empty list when all votes are NO (let orchestrator handle it)
+            # 2. Orchestrator should then either:
+            #    - Generate a direct response (without tool use)
+            #    - Ask user for clarification
+            #    - Suggest tool creation (if user explicitly requests missing functionality)
+            # For now, keeping existing behavior for backward compatibility.
             if votes:
                 votes.sort(key=lambda x: x[0].confidence, reverse=True)
                 best_vote, best_tool = votes[0]

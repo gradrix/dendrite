@@ -59,7 +59,7 @@ class IntentClassifierNeuron(BaseNeuron):
             self.pattern_cache = None
         
         # Domain router for memory detection (override LLM mistakes)
-        self.domain_router = DomainRouter()
+        self.domain_router = DomainRouter(self.ollama_client)
     
     def _load_prompt(self):
         with open("neural_engine/prompts/intent_classifier_prompt.txt", "r") as f:

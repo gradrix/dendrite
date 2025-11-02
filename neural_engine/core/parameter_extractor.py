@@ -55,15 +55,12 @@ class ParameterExtractor:
         # Build extraction prompt
         prompt = self._build_extraction_prompt(goal, tool_name, tool_description, parameters)
         
-        # Get LLM response
-        response = self.ollama_client.generate(
-            prompt=prompt,
-            temperature=0,  # Deterministic
-            max_tokens=300
-        )
+        # Get LLM response using generate()
+        response = self.ollama_client.generate(prompt=prompt, check_tokens=False)
+        response_text = response['response']
         
         # Parse response
-        extracted = self._parse_extraction(response, parameters)
+        extracted = self._parse_extraction(response_text, parameters)
         
         return extracted
     

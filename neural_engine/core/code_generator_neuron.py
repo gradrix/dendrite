@@ -70,7 +70,13 @@ class CodeGeneratorNeuron(BaseNeuron):
             params = tool_definition.get("parameters", [])
             param_names = []
             if isinstance(params, list):
-                param_names = params
+                # Check if list contains dicts (tool definition format)
+                if params and isinstance(params[0], dict):
+                    # Extract parameter names from dicts
+                    param_names = [p.get('name', p) for p in params]
+                else:
+                    # Already list of strings
+                    param_names = params
             elif isinstance(params, dict):
                 param_names = params.get("required", [])
             

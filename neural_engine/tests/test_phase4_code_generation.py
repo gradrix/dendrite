@@ -354,9 +354,9 @@ class TestPhase4FullPipeline:
         }, depth=0)
         
         # Codes should be different
-        assert result_1["code"] != result_2["code"], "Different tools should generate different code"
-        assert "HelloWorldTool" in result_1["code"], "First code should use HelloWorldTool"
-        assert "MemoryReadTool" in result_2["code"], "Second code should use MemoryReadTool"
+        assert result_1["generated_code"] != result_2["generated_code"], "Different tools should generate different code"
+        assert "HelloWorldTool" in result_1["generated_code"], "First code should use HelloWorldTool"
+        assert "MemoryReadTool" in result_2["generated_code"], "Second code should use MemoryReadTool"
 
 
 # Batch test for multiple tools

@@ -1,15 +1,15 @@
 from neural_engine.tools.base_tool import BaseTool
-import math
+from typing import Optional
 
 class AddNumbersTool(BaseTool):
     """
-    Tool to add two numbers provided as input parameters.
+    This tool adds two given numbers.
     """
 
     def get_tool_definition(self):
         return {
             "name": "add_numbers",  # snake_case, no "Tool" suffix
-            "description": "Adds two numbers provided in the parameters.",
+            "description": "Adds two provided numbers",
             "parameters": [
                 {"name": "num1", "type": "float", "description": "First number to add", "required": True},
                 {"name": "num2", "type": "float", "description": "Second number to add", "required": True}
@@ -21,14 +21,17 @@ class AddNumbersTool(BaseTool):
         Execute the tool with given parameters.
         """
         try:
-            num1 = kwargs.get('num1') or 0.0  # Optional with default
-            num2 = kwargs.get('num2') or 0.0  # Optional with default
+            num1 = kwargs.get('num1')
+            num2 = kwargs.get('num2')
 
+            # Validate required parameters
             if not (num1 and num2):
-                return {"error": "Missing required parameters: num1 and num2"}
+                return {"error": "Missing required parameters: num1, num2"}
 
-            result = f"Result: {num1 + num2}"
+            # Do the work
+            result = f"Added {num1} + {num2} = {num1 + num2}"
 
+            # Return result
             return {"result": result}
 
         except Exception as e:

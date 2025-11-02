@@ -106,7 +106,7 @@ class TestPhase3ToolMetadata:
     
     @pytest.mark.integration
     def test_selector_returns_module_name(self, tool_selector, message_bus):
-        """Selected tool should include module_name for import"""
+        """Selected tool should include module for import"""
         goal_id = message_bus.get_new_goal_id()
         goal = "Say hello"
         
@@ -115,12 +115,12 @@ class TestPhase3ToolMetadata:
         assert "selected_tools" in result, "Should have selected tools"
         assert len(result["selected_tools"]) > 0, "Should select at least one tool"
         tool = result["selected_tools"][0]
-        assert "module" in tool, "Tool should include module name"
+        assert "module" in tool, "Tool should include module"
         assert "neural_engine.tools" in tool["module"], "Should be in tools directory"
     
     @pytest.mark.integration
     def test_selector_returns_class_name(self, tool_selector, message_bus):
-        """Selected tool should include class_name for instantiation"""
+        """Selected tool should include class for instantiation"""
         goal_id = message_bus.get_new_goal_id()
         goal = "Say hello"
         
@@ -129,7 +129,7 @@ class TestPhase3ToolMetadata:
         assert "selected_tools" in result, "Should have selected tools"
         assert len(result["selected_tools"]) > 0, "Should select at least one tool"
         tool = result["selected_tools"][0]
-        assert "class" in tool, "Tool should include class name"
+        assert "class" in tool, "Tool should include class"
         assert "Tool" in tool["class"], "Class name should end with 'Tool'"
     
     @pytest.mark.integration
@@ -228,7 +228,7 @@ class TestPhase3MessageBusIntegration:
         # Extract data from new metadata format
         stored_result = stored_message["data"] if "data" in stored_message else stored_message
         
-        # Check for new API fields
+        # Check for API fields
         assert "goal" in stored_result, "Result should have 'goal' field"
         assert "selected_tools" in stored_result, "Result should have 'selected_tools' field"
         if len(stored_result["selected_tools"]) > 0:
@@ -245,6 +245,13 @@ class TestPhase3ErrorHandling:
         """Should raise error if LLM selects a tool that doesn't exist"""
         goal_id = message_bus.get_new_goal_id()
         goal = "Test goal"
+        
+        # Disable voting to test the prompt-based error handling
+        tool_selector.use_voting = False
+        tool_selector.voting_selector = None
+        
+        # Disable pattern cache to force LLM selection
+        tool_selector.use_pattern_cache = False
         
         # Mock LLM to return invalid tool
         def mock_generate(prompt):
