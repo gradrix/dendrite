@@ -149,7 +149,12 @@ class CodeGeneratorNeuron(BaseNeuron):
                 tool_definition=json.dumps(context["tool_definition"], indent=2)
             )
 
-        response = self.ollama_client.generate(prompt=prompt)
+        # Use temperature=0 for deterministic code generation
+        response = self.ollama_client.client.generate(
+            model=self.ollama_client.model,
+            prompt=prompt,
+            options={"temperature": 0}
+        )
         generated_code = response['response'].strip()
 
         # Clean up the code if it's wrapped in markdown

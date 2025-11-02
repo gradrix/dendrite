@@ -3,6 +3,8 @@ from .tool_discovery import ToolDiscovery
 from .tool_selection_validator_neuron import ToolSelectionValidatorNeuron
 from .task_simplifier import TaskSimplifier
 from .pattern_cache import PatternCache
+from .domain_router import DomainRouter
+from .memory_operations_specialist import MemoryOperationsSpecialist
 from typing import Optional, Dict, List, Tuple
 import json
 
@@ -12,7 +14,9 @@ class ToolSelectorNeuron(BaseNeuron):
                  enable_validation: bool = False,  # Disabled by default - mostly LLM quality issues
                  use_simplifier: bool = True,  # Use TaskSimplifier to help small LLM
                  use_pattern_cache: bool = True,  # Use pattern cache for adaptive learning
+                 use_specialists: bool = True,  # Use domain specialists for better accuracy
                  cache_threshold: float = 0.80,  # Cosine similarity threshold for cache hits
+                 cache_file: str = None,  # Path to cache file (None = use env var or default)
                  max_retries: int = 3,  # Reduced to 3 to avoid test timeouts
                  pattern_cache: Optional[PatternCache] = None):  # Allow injection for testing
         super().__init__(message_bus, ollama_client)
@@ -21,14 +25,27 @@ class ToolSelectorNeuron(BaseNeuron):
         self.enable_validation = enable_validation
         self.use_simplifier = use_simplifier
         self.use_pattern_cache = use_pattern_cache
+        self.use_specialists = use_specialists
         self.cache_threshold = cache_threshold
         self.validator = ToolSelectionValidatorNeuron(max_retries=max_retries) if enable_validation else None
         self.simplifier = TaskSimplifier() if use_simplifier else None
         
+        # Initialize domain router and specialists
+        if self.use_specialists:
+            self.domain_router = DomainRouter()
+            self.memory_specialist = MemoryOperationsSpecialist(message_bus, ollama_client)
+        else:
+            self.domain_router = None
+            self.memory_specialist = None
+        
         # Initialize pattern cache for adaptive learning
+        # Default path uses environment variable or falls back to var/tool_cache.json
         if self.use_pattern_cache:
+            if cache_file is None:
+                import os
+                cache_file = os.environ.get("NEURAL_ENGINE_TOOL_CACHE", "var/tool_cache.json")
             self.pattern_cache = pattern_cache if pattern_cache else PatternCache(
-                cache_file="var/tool_cache.json"
+                cache_file=cache_file
             )
         else:
             self.pattern_cache = None
@@ -38,11 +55,13 @@ class ToolSelectorNeuron(BaseNeuron):
             "semantic_enabled": tool_discovery is not None,
             "simplifier_enabled": use_simplifier,
             "pattern_cache_enabled": use_pattern_cache,
+            "specialists_enabled": use_specialists,
             "total_selections": 0,
             "avg_candidates_considered": 0,
             "simplifier_narrowing_count": 0,
             "cache_hits": 0,
-            "cache_misses": 0
+            "cache_misses": 0,
+            "specialist_uses": 0
         }
 
     def _load_prompt(self):
@@ -81,6 +100,38 @@ class ToolSelectorNeuron(BaseNeuron):
                 return result_data
             else:
                 self.selection_stats["cache_misses"] += 1
+        
+        # STAGE 0.5: Try domain specialist (new!)
+        if self.use_specialists and self.domain_router:
+            domain = self.domain_router.detect_domain(goal)
+            
+            if domain == "memory" and self.memory_specialist:
+                # Use memory operations specialist
+                self.selection_stats["specialist_uses"] += 1
+                self.selection_stats["total_selections"] += 1
+                
+                tool_selection = self.memory_specialist.select_memory_tool(goal)
+                
+                result_data = {
+                    "goal": goal,
+                    "selected_tools": [tool_selection],
+                    "method": "memory_specialist",
+                    "confidence": tool_selection.get("confidence", 0.95),
+                    "domain": domain
+                }
+                
+                # NOTE: Pattern cache storage moved to orchestrator AFTER execution validation
+                # Specialist selections will be cached after successful execution
+                
+                self.add_message_with_metadata(
+                    goal_id=goal_id,
+                    message_type="tool_selection",
+                    data=result_data,
+                    depth=depth
+                )
+                
+                print(f"🎯 Memory specialist selected: {tool_selection['name']}")
+                return result_data
         
         # Stage 3: LLM Selection from top candidates
         if self.tool_discovery:
@@ -202,15 +253,8 @@ class ToolSelectorNeuron(BaseNeuron):
                 "had_errors": len(validation_result.get("errors", [])) > 0
             }
         
-        # Store successful selection in pattern cache for learning
-        # Only store if we got a valid tool selection
-        if self.use_pattern_cache and selected_tools and len(selected_tools) > 0:
-            cache_data = {
-                "selected_tools": selected_tools,
-                "method": method
-            }
-            self.pattern_cache.store(goal, cache_data, confidence=confidence)
-            print(f"📚 Stored tool selection in pattern cache (confidence: {confidence:.2f})")
+        # NOTE: Pattern cache storage moved to orchestrator AFTER execution validation
+        # This ensures we only cache tool selections that actually worked
         
         # Use new metadata-rich message format
         self.add_message_with_metadata(

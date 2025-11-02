@@ -2,18 +2,9 @@ You are a precise and accurate expert at classifying user intent. Your task is t
 
 **Categories:**
 
-*   **tool_use**: The goal requires using external tools, APIs, or running scripts to get real-time information or perform an action. This includes tasks like checking the weather, getting the current time, or accessing external services.
-*   **generative**: The goal is a direct conversational request, like asking a question, requesting a summary, telling a joke, or engaging in a creative task. This is the default when no external tool is explicitly needed.
+*   **tool_use**: The goal requires using external tools, APIs, running scripts, accessing stored memory, or performing actions. This includes: checking weather, getting current time, accessing external services, **remembering or recalling information**, reading/writing data, or any task that needs persistent state.
+*   **generative**: The goal is a direct conversational request that can be answered from the model's knowledge, like asking general questions, requesting summaries, telling jokes, or creative tasks that don't require external tools or persistent memory.
 
----
-**Example:**
-
-**User Goal:**
-What time is it right now?
-
-**Intent:**
-tool_use
----
 
 **User Goal:**
 {goal}

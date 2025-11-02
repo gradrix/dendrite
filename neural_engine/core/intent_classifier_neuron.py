@@ -1,6 +1,8 @@
 from .neuron import BaseNeuron
 from .task_simplifier import TaskSimplifier
 from .pattern_cache import PatternCache
+from .parallel_voter import ParallelVoter
+from .simple_voters import create_intent_voters
 from typing import Optional, List, Tuple, Dict
 
 class IntentClassifierNeuron(BaseNeuron):
@@ -8,21 +10,36 @@ class IntentClassifierNeuron(BaseNeuron):
                  use_simplifier=True, 
                  simplifier_threshold=0.8,
                  use_pattern_cache=True,
+                 use_parallel_voting=True,  # NEW: True parallel voting with multiple simple neurons
                  cache_threshold=0.80,
+                 cache_file=None,
                  pattern_cache: Optional[PatternCache] = None,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.use_simplifier = use_simplifier
         self.simplifier_threshold = simplifier_threshold
         self.use_pattern_cache = use_pattern_cache
+        self.use_parallel_voting = use_parallel_voting
         self.cache_threshold = cache_threshold
         
         if self.use_simplifier:
             self.simplifier = TaskSimplifier()
         
+        # Parallel voting system - multiple simple neurons vote simultaneously
+        if self.use_parallel_voting:
+            self.parallel_voter = ParallelVoter(self.ollama_client, max_workers=8)
+            self.voters = create_intent_voters(self.ollama_client)
+        else:
+            self.parallel_voter = None
+            self.voters = None
+        
         # Pattern cache for adaptive learning
+        # Default path uses environment variable or falls back to var/intent_cache.json
         if self.use_pattern_cache:
-            self.pattern_cache = pattern_cache or PatternCache(cache_file="var/intent_cache.json")
+            if cache_file is None:
+                import os
+                cache_file = os.environ.get("NEURAL_ENGINE_INTENT_CACHE", "var/intent_cache.json")
+            self.pattern_cache = pattern_cache or PatternCache(cache_file=cache_file)
         else:
             self.pattern_cache = None
     
@@ -56,7 +73,45 @@ class IntentClassifierNeuron(BaseNeuron):
                 
                 return {"goal": goal, "intent": intent}
         
-        # Stage 2: Try keyword simplifier (fast - rule-based)
+        # Stage 2: Parallel voting system (8 simple neurons vote simultaneously)
+        # This runs BEFORE simplifier - it's more accurate and scales better
+        if self.use_parallel_voting and self.parallel_voter and self.voters:
+            vote_result = self.parallel_voter.vote(goal, self.voters)
+            
+            intent = vote_result["winner"]
+            confidence = vote_result["confidence"]
+            
+            print(f"🗳️  Parallel voting: '{goal}' → {intent} ({vote_result['num_votes']} votes, {confidence:.0%} agreement)")
+            
+            # Debug: Show individual votes
+            if vote_result.get("votes"):
+                for v in vote_result["votes"]:
+                    print(f"     • {v['label']} (conf:{v['confidence']:.1f}) - {v.get('question', '')[:50]}...")
+            
+            # Store in cache for future use
+            if self.use_pattern_cache and self.pattern_cache:
+                self.pattern_cache.store(
+                    goal,
+                    {"intent": intent},
+                    confidence=confidence
+                )
+            
+            self.add_message_with_metadata(
+                goal_id=goal_id,
+                message_type="intent",
+                data={
+                    "intent": intent,
+                    "goal": goal,
+                    "method": "parallel_voting",
+                    "confidence": confidence,
+                    "num_votes": vote_result["num_votes"]
+                },
+                depth=depth
+            )
+            
+            return {"goal": goal, "intent": intent}
+        
+        # Stage 3: Try keyword simplifier (fallback - rule-based)
         if self.use_simplifier:
             simplified = self.simplifier.simplify_for_intent_classification(goal)
             
@@ -88,7 +143,7 @@ class IntentClassifierNeuron(BaseNeuron):
                 
                 return {"goal": goal, "intent": intent}
         
-        # Stage 3: Fall back to LLM with focused few-shot examples
+        # Stage 4: Fall back to LLM with focused few-shot examples
         # Get similar examples from cache (only highly relevant ones!)
         similar_examples = []
         if self.use_pattern_cache and self.pattern_cache:
@@ -110,14 +165,8 @@ class IntentClassifierNeuron(BaseNeuron):
             print(f"⚠️  Invalid intent '{intent}', defaulting to 'generative'")
             intent = "generative"
         
-        # Store successful LLM result in cache for future learning
-        if self.use_pattern_cache and self.pattern_cache:
-            self.pattern_cache.store(
-                goal,
-                {"intent": intent},
-                confidence=0.75,  # Medium confidence for LLM results
-                metadata={"method": "llm_chat"}
-            )
+        # NOTE: Pattern cache storage moved to orchestrator AFTER execution validation
+        # This ensures we only cache patterns that actually worked in practice
 
         self.add_message_with_metadata(
             goal_id=goal_id,

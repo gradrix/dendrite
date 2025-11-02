@@ -51,13 +51,13 @@ def ollama_client():
 
 @pytest.fixture
 def intent_classifier(message_bus, ollama_client):
-    """Intent classifier neuron."""
+    """Intent classifier neuron with isolated cache via environment variables."""
     return IntentClassifierNeuron(message_bus, ollama_client)
 
 
 @pytest.fixture
 def tool_selector(message_bus, ollama_client, tool_registry):
-    """Tool selector neuron."""
+    """Tool selector neuron with isolated cache via environment variables."""
     return ToolSelectorNeuron(message_bus, ollama_client, tool_registry)
 
 
@@ -88,8 +88,8 @@ def orchestrator(intent_classifier, tool_selector, code_generator, generative_ne
 
 @pytest.fixture
 def kv_store():
-    """Key-value store for memory operations."""
-    store = KeyValueStore()
+    """Key-value store for memory operations with isolated storage via environment variables."""
+    store = KeyValueStore()  # Will use NEURAL_ENGINE_KV_STORE env var set by conftest
     # Clean up before each test
     try:
         store.delete("test_key")

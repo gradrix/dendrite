@@ -242,6 +242,39 @@ class Orchestrator:
             }
         
         execution_result = sandbox.execute(code, goal_id=goal_id, depth=depth)
+        
+        # NEW: Store in pattern cache AFTER successful execution (execution validation!)
+        execution_success = execution_result.get('success', False) or not execution_result.get('error')
+        
+        # Update pattern caches with execution validation
+        if hasattr(tool_selector, 'pattern_cache') and tool_selector.pattern_cache:
+            # Store tool selection with execution validation
+            tool_selector.pattern_cache.store_after_execution(
+                query=data.get('goal', ''),
+                decision={"selected_tools": tool_selection_data.get('selected_tools', [])},
+                execution_success=execution_success,
+                confidence=0.90 if execution_success else 0.0,
+                metadata={
+                    "method": tool_selection_data.get('method', 'unknown'),
+                    "execution_validated": True,
+                    "execution_success": execution_success
+                }
+            )
+        
+        # Also update intent classifier cache with execution result
+        intent_classifier_neuron = self.neuron_registry["intent_classifier"]
+        if hasattr(intent_classifier_neuron, 'pattern_cache') and intent_classifier_neuron.pattern_cache:
+            intent_classifier_neuron.pattern_cache.store_after_execution(
+                query=data.get('goal', ''),
+                decision={"intent": data.get('intent', 'tool_use')},
+                execution_success=execution_success,
+                confidence=0.90 if execution_success else 0.0,
+                metadata={
+                    "method": data.get('method', 'unknown'),
+                    "execution_validated": True,
+                    "execution_success": execution_success
+                }
+            )
 
         return execution_result
     

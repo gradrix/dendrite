@@ -23,14 +23,18 @@ class PatternCache:
     - Usage tracking (patterns used more often = higher confidence)
     """
     
-    def __init__(self, cache_file: str = "var/pattern_cache.json", model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, cache_file: str = None, model_name: str = "all-MiniLM-L6-v2"):
         """
         Initialize pattern cache.
         
         Args:
-            cache_file: Path to cache persistence file
+            cache_file: Path to cache persistence file (or None to use default/env var)
             model_name: Sentence transformer model for embeddings
         """
+        # Allow override via parameter or environment variable for test isolation
+        if cache_file is None:
+            cache_file = os.environ.get("NEURAL_ENGINE_PATTERN_CACHE", "var/pattern_cache.json")
+        
         self.cache_file = cache_file
         self.patterns: List[Dict[str, Any]] = []
         
@@ -49,6 +53,9 @@ class PatternCache:
         
         # Load existing patterns from disk
         self._load_from_disk()
+        
+        # Clean any invalid patterns from disk
+        self.clean_invalid_patterns()
     
     def lookup(self, query: str, threshold: float = 0.85) -> Tuple[Optional[Dict], float]:
         """
@@ -70,13 +77,22 @@ class PatternCache:
         # Encode query
         query_embedding = self.embedder.encode(query, convert_to_tensor=False)
         
-        # Find most similar pattern
+        # Find most similar pattern (prefer execution-validated ones!)
         best_similarity = 0.0
         best_pattern = None
         
         for pattern in self.patterns:
+            # Skip patterns that failed execution validation
+            metadata = pattern.get("metadata", {})
+            if metadata.get("execution_validated") and not metadata.get("execution_success"):
+                continue  # Skip failed executions
+            
             pattern_embedding = np.array(pattern["embedding"])
             similarity = self._cosine_similarity(query_embedding, pattern_embedding)
+            
+            # Boost similarity for execution-validated patterns
+            if metadata.get("execution_validated") and metadata.get("execution_success"):
+                similarity *= 1.1  # 10% boost for validated success
             
             if similarity > best_similarity and similarity >= threshold:
                 best_similarity = similarity
@@ -137,11 +153,40 @@ class PatternCache:
             "usage_count": 1,
             "created_at": self._get_timestamp(),
             "last_updated": self._get_timestamp(),
-            "metadata": metadata or {}
+            "metadata": metadata or {},
+            "execution_validated": metadata.get("execution_validated", False) if metadata else False
         }
         
         self.patterns.append(pattern)
         self._save_to_disk()
+    
+    def store_after_execution(self, query: str, decision: Dict[str, Any], execution_success: bool, 
+                             confidence: float = 0.9, metadata: Optional[Dict] = None):
+        """
+        Store pattern AFTER execution validation.
+        
+        This is the preferred method as it only caches patterns that actually worked.
+        
+        Args:
+            query: The original query text
+            decision: The decision data (intent, tool selection, etc.)
+            execution_success: Whether execution was successful
+            confidence: Initial confidence (higher for validated patterns)
+            metadata: Optional metadata
+        """
+        if not execution_success:
+            # Don't cache failures
+            print(f"⚠️  Skipping cache storage - execution failed for: {query[:50]}...")
+            return
+        
+        # Mark as execution validated
+        if metadata is None:
+            metadata = {}
+        metadata["execution_validated"] = True
+        metadata["validation_timestamp"] = self._get_timestamp()
+        
+        # Store with higher confidence (execution validated!)
+        self.store(query, decision, confidence=confidence, metadata=metadata)
     
     def get_similar_examples(self, query: str, k: int = 3, min_similarity: float = 0.5) -> List[Tuple[float, Dict, float, int]]:
         """
@@ -232,6 +277,28 @@ class PatternCache:
         self.patterns = []
         self.stats = {"lookups": 0, "hits": 0, "misses": 0, "stores": 0}
         self._save_to_disk()
+    
+    def clean_invalid_patterns(self):
+        """Remove patterns with invalid data that can't be serialized."""
+        valid_patterns = []
+        removed_count = 0
+        
+        for pattern in self.patterns:
+            try:
+                # Try to serialize the decision - if it fails, skip this pattern
+                import json
+                json.dumps(pattern["decision"])
+                valid_patterns.append(pattern)
+            except (TypeError, KeyError) as e:
+                removed_count += 1
+                print(f"⚠️  Removed invalid pattern: {e}")
+        
+        self.patterns = valid_patterns
+        if removed_count > 0:
+            print(f"✓ Cleaned {removed_count} invalid patterns from cache")
+            self._save_to_disk()
+        
+        return removed_count
     
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
