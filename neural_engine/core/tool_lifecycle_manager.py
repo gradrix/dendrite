@@ -135,26 +135,32 @@ class ToolLifecycleManager:
             Dict mapping tool_name to {status, created_at, ...}
         """
         try:
-            # Query tool_creation_events for all tools
-            result = self.store.conn.execute("""
-                SELECT tool_name, status, created_at, status_changed_at
-                FROM tool_creation_events
-                WHERE status IN ('active', 'deleted')
-                ORDER BY created_at DESC
-            """)
-            
-            tools = {}
-            for row in result:
-                tool_name = row[0]
-                # Only keep most recent entry per tool
-                if tool_name not in tools:
-                    tools[tool_name] = {
-                        'status': row[1] or 'active',  # Default to active if NULL
-                        'created_at': row[2],
-                        'status_changed_at': row[3]
-                    }
-            
-            return tools
+            # Get connection from pool
+            conn = self.store._get_connection()
+            try:
+                cursor = conn.cursor()
+                # Query tool_creation_events for all tools
+                cursor.execute("""
+                    SELECT tool_name, status, created_at, status_changed_at
+                    FROM tool_creation_events
+                    WHERE status IN ('active', 'deleted')
+                    ORDER BY created_at DESC
+                """)
+                
+                tools = {}
+                for row in cursor.fetchall():
+                    tool_name = row[0]
+                    # Only keep most recent entry per tool
+                    if tool_name not in tools:
+                        tools[tool_name] = {
+                            'status': row[1] or 'active',  # Default to active if NULL
+                            'created_at': row[2],
+                            'status_changed_at': row[3]
+                        }
+                
+                return tools
+            finally:
+                self.store._release_connection(conn)
         except Exception as e:
             logger.error(f"Error querying database tools: {e}")
             return {}
@@ -287,68 +293,74 @@ class ToolLifecycleManager:
             Cleanup report
         """
         try:
-            # Find all deleted tools
-            result = self.store.conn.execute("""
-                SELECT tool_name, status_changed_at
-                FROM tool_creation_events
-                WHERE status = 'deleted'
-            """)
-            
-            archived = []
-            kept = []
-            
-            for row in result:
-                tool_name = row[0]
-                status_changed_at = row[1]
+            # Get connection from pool
+            conn = self.store._get_connection()
+            try:
+                cursor = conn.cursor()
+                # Find all deleted tools
+                cursor.execute("""
+                    SELECT tool_name, status_changed_at
+                    FROM tool_creation_events
+                    WHERE status = 'deleted'
+                """)
                 
-                if not status_changed_at:
-                    continue  # Skip if no deletion date
+                archived = []
+                kept = []
                 
-                # Handle both datetime and string types
-                if isinstance(status_changed_at, str):
-                    status_changed_at = datetime.fromisoformat(status_changed_at)
+                for row in cursor.fetchall():
+                    tool_name = row[0]
+                    status_changed_at = row[1]
+                    
+                    if not status_changed_at:
+                        continue  # Skip if no deletion date
+                    
+                    # Handle both datetime and string types
+                    if isinstance(status_changed_at, str):
+                        status_changed_at = datetime.fromisoformat(status_changed_at)
+                    
+                    days_deleted = (datetime.now() - status_changed_at).days
+                    
+                    if days_deleted < days_threshold:
+                        kept.append({
+                            'tool_name': tool_name,
+                            'reason': f'deleted_recently ({days_deleted} days)',
+                            'days_deleted': days_deleted
+                        })
+                        continue
+                    
+                    # Check usage stats
+                    stats = self.store.get_tool_statistics(tool_name)
+                    total_uses = stats.get('total_executions', 0) if stats else 0
+                    
+                    if total_uses < 10:
+                        # Low usage, safe to archive
+                        self.store.mark_tool_status(
+                            tool_name=tool_name,
+                            status='archived',
+                            reason=f'auto_cleanup: {days_deleted} days old, {total_uses} uses'
+                        )
+                        archived.append({
+                            'tool_name': tool_name,
+                            'days_deleted': days_deleted,
+                            'total_uses': total_uses,
+                            'reason': 'low_usage'
+                        })
+                    else:
+                        # Keep for learning value
+                        kept.append({
+                            'tool_name': tool_name,
+                            'reason': f'high_usage ({total_uses} uses)',
+                            'total_uses': total_uses
+                        })
                 
-                days_deleted = (datetime.now() - status_changed_at).days
-                
-                if days_deleted < days_threshold:
-                    kept.append({
-                        'tool_name': tool_name,
-                        'reason': f'deleted_recently ({days_deleted} days)',
-                        'days_deleted': days_deleted
-                    })
-                    continue
-                
-                # Check usage stats
-                stats = self.store.get_tool_statistics(tool_name)
-                total_uses = stats.get('total_executions', 0) if stats else 0
-                
-                if total_uses < 10:
-                    # Low usage, safe to archive
-                    self.store.mark_tool_status(
-                        tool_name=tool_name,
-                        status='archived',
-                        reason=f'auto_cleanup: {days_deleted} days old, {total_uses} uses'
-                    )
-                    archived.append({
-                        'tool_name': tool_name,
-                        'days_deleted': days_deleted,
-                        'total_uses': total_uses,
-                        'reason': 'low_usage'
-                    })
-                else:
-                    # Keep for learning value
-                    kept.append({
-                        'tool_name': tool_name,
-                        'reason': f'high_usage ({total_uses} uses)',
-                        'total_uses': total_uses
-                    })
-            
-            return {
-                'archived': archived,
-                'kept': kept,
-                'total_archived': len(archived),
-                'total_kept': len(kept)
-            }
+                return {
+                    'archived': archived,
+                    'kept': kept,
+                    'total_archived': len(archived),
+                    'total_kept': len(kept)
+                }
+            finally:
+                self.store._release_connection(conn)
             
         except Exception as e:
             logger.error(f"Error during auto-cleanup: {e}")
@@ -369,57 +381,63 @@ class ToolLifecycleManager:
             Preview report
         """
         try:
-            result = self.store.conn.execute("""
-                SELECT tool_name, status_changed_at
-                FROM tool_creation_events
-                WHERE status = 'deleted'
-            """)
-            
-            would_archive = []
-            would_keep = []
-            
-            for row in result:
-                tool_name = row[0]
-                status_changed_at = row[1]
+            # Get connection from pool
+            conn = self.store._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT tool_name, status_changed_at
+                    FROM tool_creation_events
+                    WHERE status = 'deleted'
+                """)
                 
-                if not status_changed_at:
-                    continue
+                would_archive = []
+                would_keep = []
                 
-                # Handle both datetime and string types
-                if isinstance(status_changed_at, str):
-                    status_changed_at = datetime.fromisoformat(status_changed_at)
+                for row in cursor.fetchall():
+                    tool_name = row[0]
+                    status_changed_at = row[1]
+                    
+                    if not status_changed_at:
+                        continue
+                    
+                    # Handle both datetime and string types
+                    if isinstance(status_changed_at, str):
+                        status_changed_at = datetime.fromisoformat(status_changed_at)
+                    
+                    days_deleted = (datetime.now() - status_changed_at).days
+                    
+                    if days_deleted < days_threshold:
+                        would_keep.append({
+                            'tool_name': tool_name,
+                            'reason': f'deleted_recently ({days_deleted} days)'
+                        })
+                        continue
+                    
+                    stats = self.store.get_tool_statistics(tool_name)
+                    total_uses = stats.get('total_executions', 0) if stats else 0
+                    
+                    if total_uses < 10:
+                        would_archive.append({
+                            'tool_name': tool_name,
+                            'days_deleted': days_deleted,
+                            'total_uses': total_uses
+                        })
+                    else:
+                        would_keep.append({
+                            'tool_name': tool_name,
+                            'reason': f'high_usage ({total_uses} uses)'
+                        })
                 
-                days_deleted = (datetime.now() - status_changed_at).days
-                
-                if days_deleted < days_threshold:
-                    would_keep.append({
-                        'tool_name': tool_name,
-                        'reason': f'deleted_recently ({days_deleted} days)'
-                    })
-                    continue
-                
-                stats = self.store.get_tool_statistics(tool_name)
-                total_uses = stats.get('total_executions', 0) if stats else 0
-                
-                if total_uses < 10:
-                    would_archive.append({
-                        'tool_name': tool_name,
-                        'days_deleted': days_deleted,
-                        'total_uses': total_uses
-                    })
-                else:
-                    would_keep.append({
-                        'tool_name': tool_name,
-                        'reason': f'high_usage ({total_uses} uses)'
-                    })
-            
-            return {
-                'preview': True,
-                'would_archive': would_archive,
-                'would_keep': would_keep,
-                'total_would_archive': len(would_archive),
-                'total_would_keep': len(would_keep)
-            }
+                return {
+                    'preview': True,
+                    'would_archive': would_archive,
+                    'would_keep': would_keep,
+                    'total_would_archive': len(would_archive),
+                    'total_would_keep': len(would_keep)
+                }
+            finally:
+                self.store._release_connection(conn)
             
         except Exception as e:
             logger.error(f"Error during cleanup preview: {e}")

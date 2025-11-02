@@ -1,10 +1,14 @@
 from .neuron import BaseNeuron
+from .code_validator_neuron import CodeValidatorNeuron
+from typing import Dict, Tuple
 import json
 
 class CodeGeneratorNeuron(BaseNeuron):
-    def __init__(self, message_bus, ollama_client, tool_registry):
+    def __init__(self, message_bus, ollama_client, tool_registry, enable_validation=True, max_retries=5):
         super().__init__(message_bus, ollama_client)
         self.tool_registry = tool_registry
+        self.enable_validation = enable_validation
+        self.validator = CodeValidatorNeuron(max_retries=max_retries) if enable_validation else None
 
     def _load_prompt(self):
         with open("neural_engine/prompts/code_generator_prompt.txt", "r") as f:
@@ -30,14 +34,120 @@ class CodeGeneratorNeuron(BaseNeuron):
         tool_definitions = self.tool_registry.get_all_tool_definitions()
         tool_definition = tool_definitions.get(tool_name, {})
 
-        prompt_template = self._load_prompt()
-        prompt = prompt_template.format(
-            goal=goal,
-            tool_name=tool_name,
-            tool_module=module_name,
-            tool_class=class_name,
-            tool_definition=json.dumps(tool_definition, indent=2)
+        # Build context for validation
+        context = {
+            "goal": goal,
+            "tool_name": tool_name,
+            "tool_module": module_name,
+            "tool_class": class_name,
+            "tool_definition": tool_definition
+        }
+
+        # Generate code with validation and retry
+        if self.enable_validation:
+            generated_code, validation_result = self._generate_with_validation(
+                goal_id, context, depth
+            )
+        else:
+            # Fallback to original behavior without validation
+            generated_code = self._generate_code_once(context)
+            validation_result = None
+
+        result_data = {
+            "goal": goal,
+            "tool_name": tool_name,
+            "generated_code": generated_code
+        }
+        
+        # Add validation metadata if available
+        if validation_result:
+            result_data["validation"] = {
+                "valid": validation_result["valid"],
+                "attempts": validation_result.get("attempts", 1),
+                "had_errors": len(validation_result.get("errors", [])) > 0
+            }
+        
+        # Use new metadata-rich message format
+        self.add_message_with_metadata(
+            goal_id=goal_id,
+            message_type="code_generation",
+            data=result_data,
+            depth=depth
         )
+        
+        return result_data
+    
+    def _generate_with_validation(self, goal_id: str, context: Dict, depth: int) -> Tuple[str, Dict]:
+        """
+        Generate code with validation and retry mechanism.
+        
+        Attempts up to max_retries times, providing targeted feedback each time.
+        
+        Returns:
+            (generated_code, validation_result)
+        """
+        attempt = 0
+        retry_context = context.copy()
+        
+        while attempt < self.validator.max_retries:
+            attempt += 1
+            
+            # Generate code
+            generated_code = self._generate_code_once(retry_context)
+            
+            # Validate
+            validation_result = self.validator.validate_code(generated_code, context)
+            validation_result["attempts"] = attempt
+            
+            if validation_result["valid"]:
+                if attempt > 1:
+                    print(f"✅ Code generation successful after {attempt} attempts")
+                return generated_code, validation_result
+            
+            # Code has errors - check if we should retry
+            if not self.validator.should_retry(attempt):
+                print(f"⚠️  Code validation failed after {attempt} attempts. Returning best effort.")
+                return generated_code, validation_result
+            
+            # Build retry context with targeted feedback
+            print(f"🔄 Retry attempt {attempt}/{self.validator.max_retries}: {validation_result['feedback'][:100]}...")
+            retry_context = self.validator.get_retry_context(
+                validation_result, context, attempt
+            )
+        
+        # Max retries reached
+        print(f"⚠️  Max retries ({self.validator.max_retries}) reached. Returning last attempt.")
+        return generated_code, validation_result
+    
+    def _generate_code_once(self, context: Dict) -> str:
+        """
+        Generate code once (single LLM call).
+        
+        Args:
+            context: May include retry_instruction for feedback-based retry
+        """
+        prompt_template = self._load_prompt()
+        
+        # Check if this is a retry with feedback
+        if "retry_instruction" in context:
+            # Prepend retry instruction to prompt
+            retry_prefix = f"\n\n{context['retry_instruction']}\n\n"
+            prompt = retry_prefix + prompt_template.format(
+                goal=context["goal"],
+                tool_name=context["tool_name"],
+                tool_module=context["tool_module"],
+                tool_class=context["tool_class"],
+                tool_definition=json.dumps(context["tool_definition"], indent=2)
+            )
+        else:
+            # Normal first attempt
+            prompt = prompt_template.format(
+                goal=context["goal"],
+                tool_name=context["tool_name"],
+                tool_module=context["tool_module"],
+                tool_class=context["tool_class"],
+                tool_definition=json.dumps(context["tool_definition"], indent=2)
+            )
 
         response = self.ollama_client.generate(prompt=prompt)
         generated_code = response['response'].strip()
@@ -50,20 +160,4 @@ class CodeGeneratorNeuron(BaseNeuron):
         if generated_code.endswith("```"):
             generated_code = generated_code[:-3]
         
-        generated_code = generated_code.strip()
-
-        result_data = {
-            "goal": goal,
-            "tool_name": tool_name,
-            "generated_code": generated_code
-        }
-        
-        # Use new metadata-rich message format
-        self.add_message_with_metadata(
-            goal_id=goal_id,
-            message_type="code_generation",
-            data=result_data,
-            depth=depth
-        )
-        
-        return result_data
+        return generated_code.strip()

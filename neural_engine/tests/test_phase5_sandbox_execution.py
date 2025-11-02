@@ -265,7 +265,7 @@ class TestPhase5Integration:
         code_result = code_generator.process(goal_id, selection_data, depth=0)
         
         # Step 2: Execute generated code
-        execution_result = sandbox.execute(code_result["code"])
+        execution_result = sandbox.execute(code_result["generated_code"])
         
         # Step 3: Verify result
         assert execution_result["error"] is None, \
@@ -287,7 +287,7 @@ class TestPhase5Integration:
         }
         
         code_result = code_generator.process(goal_id, selection_data, depth=0)
-        execution_result = sandbox.execute(code_result["code"])
+        execution_result = sandbox.execute(code_result["generated_code"])
         
         # Should execute successfully (even if parameters aren't perfect)
         assert execution_result["error"] is None, \
@@ -309,10 +309,10 @@ class TestPhase5Integration:
         
         # Phase 4: Code generation
         code_result = code_generator.process(goal_id, selection_data, depth=0)
-        assert code_result["code"] is not None, "Should generate code"
+        assert code_result["generated_code"] is not None, "Should generate code"
         
         # Phase 5: Execution
-        execution_result = sandbox.execute(code_result["code"])
+        execution_result = sandbox.execute(code_result["generated_code"])
         assert execution_result["error"] is None, "Should execute successfully"
         
         # Verify final result
@@ -343,7 +343,7 @@ def test_execution_for_multiple_tools(tool_name, tool_module, tool_class, code_g
     code_result = code_generator.process(goal_id, selection_data, depth=0)
     
     # Execute code
-    execution_result = sandbox.execute(code_result["code"])
+    execution_result = sandbox.execute(code_result["generated_code"])
     
     # Should execute successfully
     assert execution_result["error"] is None, \

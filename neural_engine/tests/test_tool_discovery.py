@@ -198,7 +198,7 @@ class TestStatisticalRanking:
         for tool in ranked:
             assert 'score' in tool
             assert isinstance(tool['score'], float)
-            assert 0.0 <= tool['score'] <= 1.0
+            assert tool['score'] >= 0.0  # Score can be > 1.0 due to log(executions) factor
     
     def test_statistical_ranking_new_tools_default_score(self, discovery):
         """Test new tools without stats get default score of 0.5."""

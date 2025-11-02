@@ -18,7 +18,11 @@ def test_generative_pipeline():
         "generative": GenerativeNeuron(message_bus, ollama_client),
     }
 
-    orchestrator = Orchestrator(neuron_registry, tool_registry, message_bus)
+    orchestrator = Orchestrator(
+        neuron_registry=neuron_registry, 
+        tool_registry=tool_registry, 
+        message_bus=message_bus
+    )
 
     goal = "Tell me a joke."
     goal_id = message_bus.get_new_goal_id()

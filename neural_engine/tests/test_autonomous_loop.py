@@ -175,9 +175,20 @@ class TestAutonomousLoop:
     @pytest.mark.asyncio
     async def test_test_improvement(self, autonomous_loop):
         """Test improvement testing."""
+        opportunity = {
+            'tool_name': 'test_tool',
+            'type': 'low_success_rate',
+            'priority': 'high'
+        }
         improvement = {'generated_code': 'def test(): pass'}
         
-        result = await autonomous_loop._test_improvement(improvement)
+        # Mock tool instance loading and testing
+        mock_tool = Mock()
+        autonomous_loop._get_tool_instance = Mock(return_value=mock_tool)
+        autonomous_loop._determine_test_strategy = Mock(return_value={'method': 'synthetic'})
+        autonomous_loop._synthetic_test_improvement = AsyncMock(return_value={'passed': True, 'method': 'synthetic'})
+        
+        result = await autonomous_loop._test_improvement(opportunity, improvement)
         
         assert result is not None
         assert result['passed'] is True
@@ -185,9 +196,17 @@ class TestAutonomousLoop:
     @pytest.mark.asyncio
     async def test_test_improvement_no_code(self, autonomous_loop):
         """Test improvement testing when no code generated."""
+        opportunity = {
+            'tool_name': 'test_tool',
+            'type': 'low_success_rate',
+            'priority': 'high'
+        }
         improvement = {}
         
-        result = await autonomous_loop._test_improvement(improvement)
+        # Mock tool instance loading - return None to simulate failure path
+        autonomous_loop._get_tool_instance = Mock(return_value=None)
+        
+        result = await autonomous_loop._test_improvement(opportunity, improvement)
         
         assert result is not None
         assert result['passed'] is False
@@ -232,6 +251,17 @@ class TestAutonomousLoop:
         
         autonomous_loop.self_investigation = mock_investigation
         autonomous_loop.autonomous_improvement = mock_improvement
+        
+        # Mock _test_improvement to return success
+        async def mock_test_improvement(opportunity, improvement):
+            return {'passed': True, 'method': 'mocked'}
+        
+        # Mock _deploy_improvement to return success
+        async def mock_deploy_improvement(improvement):
+            return {'success': True}
+        
+        autonomous_loop._test_improvement = mock_test_improvement
+        autonomous_loop._deploy_improvement = mock_deploy_improvement
         
         opportunities = [
             {

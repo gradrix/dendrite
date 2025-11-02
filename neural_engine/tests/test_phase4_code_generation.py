@@ -76,8 +76,8 @@ class TestPhase4BasicCodeGeneration:
         result = code_generator.process(goal_id, data, depth=0)
         
         assert result is not None, "Should return result"
-        assert "code" in result, "Should have generated code"
-        assert len(result["code"]) > 0, "Code should not be empty"
+        assert "generated_code" in result, "Should have generated code"
+        assert len(result["generated_code"]) > 0, "Code should not be empty"
     
     @pytest.mark.integration
     def test_generated_code_is_valid_python(self, code_generator, message_bus):
@@ -92,7 +92,7 @@ class TestPhase4BasicCodeGeneration:
         }
         
         result = code_generator.process(goal_id, data, depth=0)
-        code = result["code"]
+        code = result["generated_code"]
         
         # Should be able to parse as valid Python
         try:
@@ -116,7 +116,7 @@ class TestPhase4BasicCodeGeneration:
         }
         
         result = code_generator.process(goal_id, data, depth=0)
-        code = result["code"]
+        code = result["generated_code"]
         
         assert "import" in code or "from" in code, "Code should have import statement"
         assert "HelloWorldTool" in code, "Code should reference HelloWorldTool"
@@ -134,7 +134,7 @@ class TestPhase4BasicCodeGeneration:
         }
         
         result = code_generator.process(goal_id, data, depth=0)
-        code = result["code"]
+        code = result["generated_code"]
         
         assert "execute()" in code or "execute(" in code, "Code should call execute method"
     
@@ -151,7 +151,7 @@ class TestPhase4BasicCodeGeneration:
         }
         
         result = code_generator.process(goal_id, data, depth=0)
-        code = result["code"]
+        code = result["generated_code"]
         
         assert "sandbox.set_result" in code, "Code should call sandbox.set_result()"
 
@@ -172,7 +172,7 @@ class TestPhase4ParameterExtraction:
         }
         
         result = code_generator.process(goal_id, data, depth=0)
-        code = result["code"]
+        code = result["generated_code"]
         
         # Code should attempt to pass parameters to execute()
         assert "execute(" in code, "Should call execute with parameters"
@@ -192,7 +192,7 @@ class TestPhase4ParameterExtraction:
         }
         
         result = code_generator.process(goal_id, data, depth=0)
-        code = result["code"]
+        code = result["generated_code"]
         
         # Should call execute() with no arguments or empty arguments
         assert "execute()" in code, "Should call execute() with no arguments"
@@ -214,7 +214,7 @@ class TestPhase4CodeQuality:
         }
         
         result = code_generator.process(goal_id, data, depth=0)
-        code = result["code"]
+        code = result["generated_code"]
         
         assert not code.startswith("```"), "Code should not start with markdown"
         assert not code.endswith("```"), "Code should not end with markdown"
@@ -233,7 +233,7 @@ class TestPhase4CodeQuality:
         }
         
         result = code_generator.process(goal_id, data, depth=0)
-        code = result["code"]
+        code = result["generated_code"]
         
         # Find positions of key elements
         import_pos = code.find("import")
@@ -271,7 +271,7 @@ class TestPhase4MessageBusIntegration:
         
         assert stored_result is not None, "Should store result in message bus"
         assert "code" in stored_result, "Stored result should have code"
-        assert len(stored_result["code"]) > 0, "Stored code should not be empty"
+        assert len(stored_result["generated_code"]) > 0, "Stored code should not be empty"
     
     @pytest.mark.integration
     def test_result_contains_all_fields(self, code_generator, message_bus):
@@ -314,11 +314,11 @@ class TestPhase4FullPipeline:
         result = code_generator.process(goal_id, selection_data, depth=0)
         
         # Validate code generation
-        assert result["code"] is not None, "Should generate code"
+        assert result["generated_code"] is not None, "Should generate code"
         
         # Code should be executable Python
         try:
-            ast.parse(result["code"])
+            ast.parse(result["generated_code"])
             syntax_valid = True
         except:
             syntax_valid = False
@@ -326,7 +326,7 @@ class TestPhase4FullPipeline:
         assert syntax_valid, "Generated code should be syntactically valid"
         
         # Code should reference the correct tool
-        assert "HelloWorldTool" in result["code"], "Code should use correct tool class"
+        assert "HelloWorldTool" in result["generated_code"], "Code should use correct tool class"
     
     @pytest.mark.integration
     def test_different_tools_generate_different_code(self, code_generator, message_bus):
@@ -377,15 +377,15 @@ def test_code_generation_for_multiple_tools(tool_name, tool_module, tool_class, 
     result = code_generator.process(goal_id, data, depth=0)
     
     # Should generate valid code
-    assert result["code"] is not None, f"Should generate code for {tool_name}"
-    assert len(result["code"]) > 0, f"Code for {tool_name} should not be empty"
+    assert result["generated_code"] is not None, f"Should generate code for {tool_name}"
+    assert len(result["generated_code"]) > 0, f"Code for {tool_name} should not be empty"
     
     # Code should reference the correct class
-    assert tool_class in result["code"], f"Code should reference {tool_class}"
+    assert tool_class in result["generated_code"], f"Code should reference {tool_class}"
     
     # Code should be syntactically valid
     try:
-        ast.parse(result["code"])
+        ast.parse(result["generated_code"])
         syntax_valid = True
     except:
         syntax_valid = False

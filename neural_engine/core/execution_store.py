@@ -310,11 +310,45 @@ class ExecutionStore:
         """
         Update aggregated tool statistics.
         Should be called periodically (hourly/daily).
+        
+        Note: Statistics are automatically updated via trigger on tool_executions.
+        This method forces a full recalculation for all tools.
         """
         conn = self._get_connection()
         try:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT update_tool_statistics()")
+                # Manually refresh statistics for all tools
+                cursor.execute("""
+                    INSERT INTO tool_statistics (
+                        tool_name, 
+                        total_executions, 
+                        successful_executions, 
+                        failed_executions,
+                        avg_duration_ms,
+                        last_used,
+                        first_used,
+                        updated_at
+                    )
+                    SELECT 
+                        tool_name,
+                        COUNT(*) as total,
+                        SUM(CASE WHEN success THEN 1 ELSE 0 END) as successful,
+                        SUM(CASE WHEN NOT success THEN 1 ELSE 0 END) as failed,
+                        AVG(duration_ms) as avg_duration,
+                        MAX(created_at) as last_used,
+                        MIN(created_at) as first_used,
+                        NOW() as updated_at
+                    FROM tool_executions
+                    GROUP BY tool_name
+                    ON CONFLICT (tool_name) 
+                    DO UPDATE SET
+                        total_executions = EXCLUDED.total_executions,
+                        successful_executions = EXCLUDED.successful_executions,
+                        failed_executions = EXCLUDED.failed_executions,
+                        avg_duration_ms = EXCLUDED.avg_duration_ms,
+                        last_used = EXCLUDED.last_used,
+                        updated_at = NOW()
+                """)
                 conn.commit()
         finally:
             self._release_connection(conn)

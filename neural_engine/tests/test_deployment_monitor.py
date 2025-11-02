@@ -162,8 +162,8 @@ def test_compare_metrics_no_regression(deployment_monitor):
     comparison = deployment_monitor._compare_metrics(baseline, current)
     
     assert comparison['has_sufficient_data'] is True
-    assert comparison['success_rate_change'] == -0.02
-    assert comparison['success_rate_drop'] == 0.02
+    assert abs(comparison['success_rate_change'] - (-0.02)) < 1e-9
+    assert abs(comparison['success_rate_drop'] - 0.02) < 1e-9
     assert comparison['baseline_success_rate'] == 0.9
     assert comparison['current_success_rate'] == 0.88
     assert comparison['regression_detected'] is False  # Below 15% threshold
@@ -187,7 +187,7 @@ def test_compare_metrics_medium_regression(deployment_monitor):
     
     comparison = deployment_monitor._compare_metrics(baseline, current)
     
-    assert comparison['success_rate_drop'] == 0.18
+    assert abs(comparison['success_rate_drop'] - 0.18) < 1e-9
     assert comparison['regression_detected'] is True
     assert comparison['regression_severity'] == 'medium'
 

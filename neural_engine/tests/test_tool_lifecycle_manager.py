@@ -31,9 +31,19 @@ class TestToolLifecycleManager:
         store.mark_tool_status = Mock()
         store.get_tool_statistics = Mock()
         
-        # Mock database connection
-        store.conn = Mock()
-        store.conn.execute = Mock()
+        # Mock connection pool pattern
+        mock_conn = Mock()
+        mock_cursor = Mock()
+        mock_conn.cursor = Mock(return_value=mock_cursor)
+        mock_cursor.execute = Mock()
+        mock_cursor.fetchall = Mock(return_value=[])
+        
+        store._get_connection = Mock(return_value=mock_conn)
+        store._release_connection = Mock()
+        
+        # Store references for test access
+        store._mock_conn = mock_conn
+        store._mock_cursor = mock_cursor
         
         return store
     
@@ -85,7 +95,7 @@ class TestToolLifecycleManager:
             ('calculator', 'deleted', datetime.now(), datetime.now()),
             ('weather', 'active', datetime.now(), None)
         ]
-        mock_execution_store.conn.execute.return_value = mock_result
+        mock_execution_store._mock_cursor.fetchall.return_value = mock_result
         
         db_tools = lifecycle_manager._get_database_tools()
         
@@ -100,7 +110,7 @@ class TestToolLifecycleManager:
         mock_result = [
             ('deleted_tool', 'active', datetime.now(), None)
         ]
-        mock_execution_store.conn.execute.return_value = mock_result
+        mock_execution_store._mock_cursor.fetchall.return_value = mock_result
         mock_execution_store.get_tool_statistics.return_value = {
             'total_executions': 5,
             'success_rate': 0.6
@@ -128,7 +138,7 @@ class TestToolLifecycleManager:
         mock_result = [
             ('restored', 'deleted', datetime.now() - timedelta(days=1), datetime.now())
         ]
-        mock_execution_store.conn.execute.return_value = mock_result
+        mock_execution_store._mock_cursor.fetchall.return_value = mock_result
         
         # Run sync
         report = lifecycle_manager.sync_and_reconcile()
@@ -149,7 +159,7 @@ class TestToolLifecycleManager:
         (Path(temp_tools_dir) / 'manual_tool.py').write_text("# Manual")
         
         # Setup: No tools in DB
-        mock_execution_store.conn.execute.return_value = []
+        mock_execution_store._mock_cursor.fetchall.return_value = []
         
         # Run sync
         report = lifecycle_manager.sync_and_reconcile()
@@ -221,7 +231,7 @@ class TestToolLifecycleManager:
             ('old_useful', old_date),  # Should keep
             ('recent_junk', recent_date)  # Should keep (too recent)
         ]
-        mock_execution_store.conn.execute.return_value = mock_result
+        mock_execution_store._mock_cursor.fetchall.return_value = mock_result
         
         # Mock statistics
         def get_stats(tool_name):
@@ -251,7 +261,7 @@ class TestToolLifecycleManager:
         mock_result = [
             ('would_archive', old_date)
         ]
-        mock_execution_store.conn.execute.return_value = mock_result
+        mock_execution_store._mock_cursor.fetchall.return_value = mock_result
         mock_execution_store.get_tool_statistics.return_value = {'total_executions': 2}
         
         report = lifecycle_manager._preview_cleanup(days_threshold=90)
@@ -279,7 +289,7 @@ class TestToolLifecycleManager:
         mock_cleanup_result = [
             ('deleted', datetime.now() - timedelta(days=100))
         ]
-        mock_execution_store.conn.execute.side_effect = [mock_sync_result, mock_cleanup_result]
+        mock_execution_store._mock_cursor.fetchall.side_effect = [mock_sync_result, mock_cleanup_result]
         mock_execution_store.get_tool_statistics.return_value = {'total_executions': 2}
         
         # Run maintenance
@@ -339,7 +349,7 @@ class TestToolLifecycleManager:
         mock_result = [
             ('useful_tool', 'active', datetime.now(), None)
         ]
-        mock_execution_store.conn.execute.return_value = mock_result
+        mock_execution_store._mock_cursor.fetchall.return_value = mock_result
         mock_execution_store.get_tool_statistics.return_value = {
             'total_executions': 100,
             'success_rate': 0.95,

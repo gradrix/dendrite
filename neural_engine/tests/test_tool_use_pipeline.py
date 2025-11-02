@@ -26,12 +26,16 @@ def test_tool_use_pipeline(mocker):
     neuron_registry = {
         "intent_classifier": IntentClassifierNeuron(message_bus, ollama_client),
         "tool_selector": ToolSelectorNeuron(message_bus, ollama_client, tool_registry),
-        "code_generator": CodeGeneratorNeuron(message_bus, ollama_client),
+        "code_generator": CodeGeneratorNeuron(message_bus, ollama_client, tool_registry),
         "sandbox": Sandbox(message_bus),
         "generative": GenerativeNeuron(message_bus, ollama_client)
     }
 
-    orchestrator = Orchestrator(neuron_registry, tool_registry, message_bus)
+    orchestrator = Orchestrator(
+        neuron_registry=neuron_registry, 
+        tool_registry=tool_registry, 
+        message_bus=message_bus
+    )
 
     goal = "What time is it?"
     goal_id = message_bus.get_new_goal_id()

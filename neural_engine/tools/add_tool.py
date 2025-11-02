@@ -1,18 +1,18 @@
 from neural_engine.tools.base_tool import BaseTool
 import math
 
-class AdditionTool(BaseTool):
+class AddTool(BaseTool):
     """
-    Tool to add two numbers together.
+    This tool takes two numbers and adds them together.
     """
 
     def get_tool_definition(self):
         return {
-            "name": "addition",  # snake_case, no "Tool" suffix
-            "description": "Adds two provided numbers.",
+            "name": "add",  # snake_case, no "Tool" suffix
+            "description": "Adds two numbers.",
             "parameters": [
-                {"name": "num1", "type": "float", "description": "First number to add.", "required": True},
-                {"name": "num2", "type": "float", "description": "Second number to add.", "required": True}
+                {"name": "num1", "type": "float", "description": "First number", "required": True},
+                {"name": "num2", "type": "float", "description": "Second number", "required": True}
             ]
         }
 
@@ -26,10 +26,9 @@ class AdditionTool(BaseTool):
 
             # Validate required parameters
             if not (num1 and num2):
-                return {"error": "Missing required parameters: num1 and num2"}
+                return {"error": "Missing required parameter(s) for operation."}
 
-            # Do the work
-            result = f"Result of adding {num1} and {num2}: {num1 + num2}"
+            result = num1 + num2
 
             # Return result
             return {"result": result}
