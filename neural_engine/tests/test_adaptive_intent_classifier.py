@@ -237,8 +237,8 @@ class TestMethodTracking:
         print(f"✓ Method tracked: {message['data']['method']}")
     
     def test_simplifier_method_tracking(self, adaptive_classifier, message_bus, pattern_cache):
-        """Should track when simplifier is used."""
-        # Clear cache to force simplifier
+        """Should track when fact-based or simplifier is used."""
+        # Clear cache to force fact-based/simplifier classification
         pattern_cache.clear()
         
         goal = "Say hello world"
@@ -251,8 +251,9 @@ class TestMethodTracking:
         assert message is not None
         assert "data" in message
         assert "method" in message["data"]
-        assert message["data"]["method"] == "simplifier"
-        print("✓ Simplifier method tracked")
+        # Accept either fact_based (preferred) or simplifier (fallback)
+        assert message["data"]["method"] in ["fact_based", "simplifier"]
+        print(f"✓ Classification method tracked: {message['data']['method']}")
     
     def test_llm_method_tracking(self, classifier_no_cache, message_bus):
         """Should track when LLM is used."""

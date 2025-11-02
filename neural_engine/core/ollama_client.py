@@ -1,11 +1,23 @@
 import ollama
 import os
+from .exceptions import TokenLimitExceeded
+
 
 class OllamaClient:
     def __init__(self):
         host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         self.model = os.environ.get("OLLAMA_MODEL", "mistral")
         self.client = ollama.Client(host=host)
+        
+        # Model-specific token limits (can be overridden)
+        self.token_limits = {
+            "mistral": 4096,
+            "llama2": 4096,
+            "codellama": 16384,
+            "llama3": 8192,
+        }
+        self.token_limit = self.token_limits.get(self.model.split(":")[0], 4096)
+        
         self._ensure_model_is_available()
 
     def _ensure_model_is_available(self):
@@ -33,9 +45,39 @@ class OllamaClient:
             # We'll re-raise for now to make the startup failure obvious.
             raise
 
-    def generate(self, prompt):
+    def generate(self, prompt, context: str = None, check_tokens: bool = True):
+        """
+        Generate response from prompt.
+        
+        Args:
+            prompt: Text prompt
+            context: Optional context description for error messages
+            check_tokens: Whether to estimate and check token count
+        
+        Returns:
+            Response dict
+            
+        Raises:
+            TokenLimitExceeded: If prompt exceeds model's token limit
+        """
+        if check_tokens:
+            estimated_tokens = self._estimate_tokens(prompt)
+            if estimated_tokens > self.token_limit:
+                raise TokenLimitExceeded(
+                    prompt_length=estimated_tokens,
+                    limit=self.token_limit,
+                    context=context or "generate() call"
+                )
+        
         response = self.client.generate(model=self.model, prompt=prompt)
         return response
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        Rough estimation: ~4 characters per token on average.
+        This is conservative - better to overestimate than underestimate.
+        """
+        return len(text) // 3  # Conservative: 3 chars/token
     
     def chat(self, messages, options=None):
         """

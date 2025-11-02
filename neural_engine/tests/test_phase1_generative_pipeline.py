@@ -265,12 +265,14 @@ class TestPhase1MessageBusIntegration:
         intent = intent_message["data"]["intent"] if "data" in intent_message else intent_message
         
         # Verify response was stored
-        response = message_bus.get_message(goal_id, "generative_response")
-        assert response is not None
+        response_message = message_bus.get_message(goal_id, "generative_response")
+        assert response_message is not None
+        # Extract actual response from metadata
+        response_text = response_message["data"]["response"] if "data" in response_message else response_message
         
         # Verify returned response matches stored response
-        assert result["response"] == response
+        assert result["response"] == response_text
         
         print(f"✓ Complete message flow verified")
         print(f"  Intent: {intent}")
-        print(f"  Response: {response[:50]}...")
+        print(f"  Response: {response_text[:50]}...")

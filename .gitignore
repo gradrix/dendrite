@@ -13,11 +13,13 @@ state/data_cache/*.json
 # Neural Engine Data Directory (all runtime data)
 .neural_engine_data/
 
-# Legacy directories (to be migrated)
+# Runtime data (prod/test isolated)
+var/prod/
+var/test/
 chroma_data/
-var/
 *.sqlite3
 chroma.sqlite3
+dump.rdb
 
 # Python
 __pycache__/

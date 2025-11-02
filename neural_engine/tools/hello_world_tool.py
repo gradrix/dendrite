@@ -4,7 +4,7 @@ class HelloWorldTool(BaseTool):
     def get_tool_definition(self):
         return {
             "name": "hello_world",
-            "description": "A simple tool that returns a greeting.",
+            "description": "Outputs or says 'Hello, World!' greeting message. Use when user asks to say hello, print hello, or display hello world.",
             "parameters": []
         }
 

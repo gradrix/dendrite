@@ -37,7 +37,15 @@ class TestIntentClassifierNeuronIT(unittest.TestCase):
         # Assert
         self.assertIn("intent", result)
         self.assertEqual(result["intent"], "tool_use")
-        self.mock_message_bus.add_message.assert_called_once_with(goal_id, "intent", "tool_use")
+        
+        # Check that add_message was called with correct metadata structure
+        self.mock_message_bus.add_message.assert_called_once()
+        call_args = self.mock_message_bus.add_message.call_args[0]
+        self.assertEqual(call_args[0], goal_id)
+        self.assertEqual(call_args[1], "intent")
+        # Third arg is now full metadata dict
+        metadata = call_args[2]
+        self.assertEqual(metadata["data"]["intent"], "tool_use")
 
 if __name__ == '__main__':
     unittest.main()

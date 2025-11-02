@@ -3,6 +3,7 @@ from .task_simplifier import TaskSimplifier
 from .pattern_cache import PatternCache
 from .parallel_voter import ParallelVoter
 from .simple_voters import create_intent_voters
+from .semantic_intent_classifier import SemanticIntentClassifier
 from typing import Optional, List, Tuple, Dict
 
 class IntentClassifierNeuron(BaseNeuron):
@@ -10,7 +11,9 @@ class IntentClassifierNeuron(BaseNeuron):
                  use_simplifier=True, 
                  simplifier_threshold=0.8,
                  use_pattern_cache=True,
-                 use_parallel_voting=True,  # NEW: True parallel voting with multiple simple neurons
+                 use_semantic=False,  # Revolutionary keyword-enhanced semantic classification
+                 use_parallel_voting=False,  # Voting system for ambiguous cases
+                 semantic_confidence_threshold=0.60,  # Fall back to voting if below this
                  cache_threshold=0.80,
                  cache_file=None,
                  pattern_cache: Optional[PatternCache] = None,
@@ -19,13 +22,24 @@ class IntentClassifierNeuron(BaseNeuron):
         self.use_simplifier = use_simplifier
         self.simplifier_threshold = simplifier_threshold
         self.use_pattern_cache = use_pattern_cache
+        self.use_semantic = use_semantic
         self.use_parallel_voting = use_parallel_voting
+        self.semantic_confidence_threshold = semantic_confidence_threshold
         self.cache_threshold = cache_threshold
         
         if self.use_simplifier:
             self.simplifier = TaskSimplifier()
         
-        # Parallel voting system - multiple simple neurons vote simultaneously
+        # Semantic classification system (REVOLUTIONARY - keyword-enhanced!)
+        if self.use_semantic:
+            self.semantic_classifier = SemanticIntentClassifier(
+                self.ollama_client,
+                top_k_facts=5
+            )
+        else:
+            self.semantic_classifier = None
+        
+        # Parallel voting system - multiple simple neurons vote simultaneously (fallback)
         if self.use_parallel_voting:
             self.parallel_voter = ParallelVoter(self.ollama_client, max_workers=8)
             self.voters = create_intent_voters(self.ollama_client)
@@ -73,8 +87,45 @@ class IntentClassifierNeuron(BaseNeuron):
                 
                 return {"goal": goal, "intent": intent}
         
-        # Stage 2: Parallel voting system (8 simple neurons vote simultaneously)
-        # This runs BEFORE simplifier - it's more accurate and scales better
+        # Stage 2: Semantic classification (REVOLUTIONARY - keyword-enhanced!)
+        if self.use_semantic and self.semantic_classifier:
+            semantic_result = self.semantic_classifier.classify(goal, debug=False)
+            
+            intent = semantic_result["intent"]
+            confidence = semantic_result["confidence"]
+            
+            print(f"🎯 Semantic (keywords: {', '.join(semantic_result.get('keywords', [])[:3])}): '{goal}' → {intent} ({confidence:.0%}, {semantic_result['num_matched']}/{semantic_result['num_relevant']} facts)")
+            
+            # If confidence is high enough, use it
+            if confidence >= self.semantic_confidence_threshold:
+                # Store in cache for future use
+                if self.use_pattern_cache and self.pattern_cache:
+                    self.pattern_cache.store(
+                        goal,
+                        {"intent": intent},
+                        confidence=confidence
+                    )
+                
+                self.add_message_with_metadata(
+                    goal_id=goal_id,
+                    message_type="intent",
+                    data={
+                        "intent": intent,
+                        "goal": goal,
+                        "method": "semantic",
+                        "confidence": confidence,
+                        "keywords": semantic_result.get("keywords", []),
+                        "num_matched": semantic_result["num_matched"]
+                    },
+                    depth=depth
+                )
+                
+                return {"goal": goal, "intent": intent}
+            else:
+                # Low confidence - fall through to voting
+                print(f"   ⚠️  Low confidence ({confidence:.0%} < {self.semantic_confidence_threshold:.0%}), falling back to voting...")
+        
+        # Stage 2.5: Parallel voting (fallback when semantic has low confidence)
         if self.use_parallel_voting and self.parallel_voter and self.voters:
             vote_result = self.parallel_voter.vote(goal, self.voters)
             

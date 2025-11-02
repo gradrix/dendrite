@@ -138,8 +138,8 @@ class ToolSelectorNeuron(BaseNeuron):
             # Use 3-stage filtering (Stages 1+2 already done in discover_tools)
             discovered_tools = self.tool_discovery.discover_tools(
                 goal_text=goal,
-                semantic_limit=20,  # Stage 1: 1000+ → 20 candidates
-                ranking_limit=5      # Stage 2: 20 → 5 top performers
+                semantic_limit=10,  # Stage 1: 1000+ → 10 candidates (was 20, reduced for token limit)
+                ranking_limit=5      # Stage 2: 10 → 5 top performers
             )
             
             # Build tool definitions for top 5 candidates only
@@ -161,9 +161,14 @@ class ToolSelectorNeuron(BaseNeuron):
             
             self.selection_stats["avg_candidates_considered"] = len(tool_definitions)
         else:
-            # Fallback: Use all tools (original behavior)
-            tool_definitions = self.tool_registry.get_all_tool_definitions()
+            # Fallback: Use all tools but limit to prevent token overflow
+            all_tools = self.tool_registry.get_all_tool_definitions()
+            # If too many tools, this is a problem - we need tool_discovery!
+            # For now, just take first 10 tools to avoid token limit
+            tool_definitions = dict(list(all_tools.items())[:10])
             self.selection_stats["avg_candidates_considered"] = len(tool_definitions)
+            if len(all_tools) > 10:
+                print(f"⚠️  WARNING: {len(all_tools)} tools available but only using 10 to avoid token limit. Enable tool_discovery for better selection!")
         
         # NEW: Try TaskSimplifier to narrow tools before LLM
         narrowed_tools = tool_definitions
@@ -420,9 +425,26 @@ class ToolSelectorNeuron(BaseNeuron):
             prompt_parts.append(f"{context['retry_instruction']}\n\n")
         
         # Add main prompt
+        # Create CONCISE tool descriptions to avoid token limit
+        concise_tools = {}
+        for tool_name, tool_def in tool_definitions.items():
+            # Extract parameter names safely (could be list or dict)
+            params = tool_def.get("parameters", {})
+            if isinstance(params, dict):
+                param_names = list(params.keys())
+            elif isinstance(params, list):
+                param_names = [p.get("name", "") for p in params if isinstance(p, dict)]
+            else:
+                param_names = []
+            
+            concise_tools[tool_name] = {
+                "description": tool_def.get("description", "")[:200],  # Truncate long descriptions
+                "parameters": param_names  # Just parameter names, not full details
+            }
+        
         prompt_parts.append(prompt_template.format(
             goal=context["goal"],
-            tools=json.dumps(tool_definitions, indent=2)
+            tools=json.dumps(concise_tools, indent=2)
         ))
         
         prompt = "".join(prompt_parts)

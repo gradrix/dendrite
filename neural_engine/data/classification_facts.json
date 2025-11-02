@@ -1,0 +1,160 @@
+{
+  "version": "1.0.0",
+  "description": "Intent classification facts for semantic matching",
+  "facts": [
+    {
+      "id": "memory_read_001",
+      "description": "user asks 'what is my name' or 'who am I' or similar personal identity questions",
+      "intent": "tool_use",
+      "confidence": 0.98,
+      "category": "memory_read",
+      "examples": [
+        "What is my name?",
+        "Who am I?",
+        "Do you know my name?",
+        "What's my identity?"
+      ],
+      "tags": ["memory", "personal", "identity", "name"]
+    },
+    {
+      "id": "memory_write_001",
+      "description": "user wants to store, save, or remember their personal information (name, email, preferences)",
+      "intent": "tool_use",
+      "confidence": 0.98,
+      "category": "memory_write",
+      "examples": [
+        "Remember my name is Alice",
+        "Save my email as test@example.com",
+        "Store that I prefer dark mode",
+        "My name is Bob"
+      ],
+      "tags": ["memory", "store", "save", "remember", "personal"]
+    },
+    {
+      "id": "memory_read_002",
+      "description": "user asks about their stored personal information (name, email, preferences, history)",
+      "intent": "tool_use",
+      "confidence": 0.95,
+      "category": "memory_read",
+      "examples": [
+        "What's my email?",
+        "What are my preferences?",
+        "What do you know about me?",
+        "Show me my saved information"
+      ],
+      "tags": ["memory", "personal", "retrieve", "recall"]
+    },
+    {
+      "id": "external_api_001",
+      "description": "user needs real-time or current information (time, date, weather, stock prices, news)",
+      "intent": "tool_use",
+      "confidence": 0.95,
+      "category": "external_api",
+      "examples": [
+        "What time is it?",
+        "What's the weather today?",
+        "What's the current date?",
+        "Get latest stock price for AAPL"
+      ],
+      "tags": ["real-time", "current", "external", "api", "time", "weather"]
+    },
+    {
+      "id": "external_api_002",
+      "description": "user wants to access external services, APIs, or databases",
+      "intent": "tool_use",
+      "confidence": 0.90,
+      "category": "external_api",
+      "examples": [
+        "Search Wikipedia for Python",
+        "Get data from the database",
+        "Call the API endpoint",
+        "Fetch user data from server"
+      ],
+      "tags": ["external", "api", "service", "database", "fetch"]
+    },
+    {
+      "id": "calculation_001",
+      "description": "user wants to perform calculations, math operations, or numerical computations",
+      "intent": "tool_use",
+      "confidence": 0.90,
+      "category": "calculation",
+      "examples": [
+        "Calculate 5 + 3",
+        "What is 15% of 200?",
+        "Compute the square root of 144",
+        "Add these numbers: 10, 20, 30"
+      ],
+      "tags": ["math", "calculation", "compute", "numbers", "arithmetic"]
+    },
+    {
+      "id": "code_execution_001",
+      "description": "user wants to run code, execute scripts, or test programming logic",
+      "intent": "tool_use",
+      "confidence": 0.95,
+      "category": "code_execution",
+      "examples": [
+        "Run this Python script",
+        "Execute the code",
+        "Test this function",
+        "Evaluate this expression"
+      ],
+      "tags": ["code", "execute", "run", "script", "program"]
+    },
+    {
+      "id": "output_command_001",
+      "description": "user asks to print, display, or say a specific string or message (e.g., 'say hello', 'print hello world')",
+      "intent": "tool_use",
+      "confidence": 0.92,
+      "category": "output_command",
+      "examples": [
+        "Say hello world",
+        "Print hello world",
+        "Display 'Hello'",
+        "Output the text 'test'"
+      ],
+      "tags": ["output", "print", "say", "display", "show"]
+    },
+    {
+      "id": "creative_001",
+      "description": "user wants creative content (jokes, stories, poems, narratives)",
+      "intent": "generative",
+      "confidence": 0.95,
+      "category": "creative",
+      "examples": [
+        "Tell me a joke",
+        "Write me a story",
+        "Create a poem about nature",
+        "Make up a funny scenario"
+      ],
+      "tags": ["creative", "joke", "story", "poem", "narrative", "funny"]
+    },
+    {
+      "id": "explanation_001",
+      "description": "user asks for explanations or how-to information",
+      "intent": "generative",
+      "confidence": 0.85,
+      "category": "general_knowledge",
+      "examples": [
+        "Explain how photosynthesis works",
+        "How do I make coffee?",
+        "Teach me about quantum physics",
+        "What are the steps to bake a cake?"
+      ],
+      "tags": ["explain", "how-to", "teach", "learn", "education"]
+    },
+    {
+      "id": "definition_001",
+      "description": "user asks about concepts, definitions, or historical facts",
+      "intent": "generative",
+      "confidence": 0.85,
+      "category": "general_knowledge",
+      "examples": [
+        "What is Python?",
+        "Define machine learning",
+        "Who was Albert Einstein?",
+        "What does 'paradigm' mean?"
+      ],
+      "tags": ["definition", "concept", "history", "knowledge", "what-is"]
+    }
+  ]
+}
