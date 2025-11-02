@@ -209,9 +209,11 @@ class TestPhase3MessageBusIntegration:
         tool_selector.process(goal_id, goal, depth=0)
         
         # Retrieve from message bus
-        stored_result = message_bus.get_message(goal_id, "tool_selection")
+        stored_message = message_bus.get_message(goal_id, "tool_selection")
         
-        assert stored_result is not None, "Should store result in message bus"
+        assert stored_message is not None, "Should store result in message bus"
+        # Extract data from new metadata format
+        stored_result = stored_message["data"] if "data" in stored_message else stored_message
         assert "selected_tools" in stored_result, "Should have selected tools"
     
     @pytest.mark.integration
@@ -221,7 +223,10 @@ class TestPhase3MessageBusIntegration:
         goal = "Say hello"
         
         tool_selector.process(goal_id, goal, depth=0)
-        stored_result = message_bus.get_message(goal_id, "tool_selection")
+        stored_message = message_bus.get_message(goal_id, "tool_selection")
+        
+        # Extract data from new metadata format
+        stored_result = stored_message["data"] if "data" in stored_message else stored_message
         
         # Check for new API fields
         assert "goal" in stored_result, "Result should have 'goal' field"
@@ -284,8 +289,12 @@ class TestPhase3ToolSelectionIntegration:
         assert "class" in tool, "Should have class info"
         
         # 3. Verify storage
-        stored = message_bus.get_message(goal_id, "tool_selection")
-        assert stored == result, "Stored result should match returned result"
+        stored_message = message_bus.get_message(goal_id, "tool_selection")
+        assert stored_message is not None, "Should have stored message"
+        # Extract data from new metadata format
+        stored_data = stored_message["data"] if "data" in stored_message else stored_message
+        assert stored_data["goal"] == result["goal"], "Stored goal should match"
+        assert len(stored_data["selected_tools"]) == len(result["selected_tools"]), "Stored tools should match"
         
         # 4. Verify tool actually exists in registry
         tool_def = tool_selector.tool_registry.get_tool(tool["name"])

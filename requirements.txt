@@ -11,3 +11,5 @@ starlette
 pydantic
 psycopg2-binary
 chromadb
+sentence-transformers
+numpy

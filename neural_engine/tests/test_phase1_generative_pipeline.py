@@ -178,7 +178,10 @@ class TestPhase1GenerativePipeline:
         result = orchestrator.execute(goal_id, goal)
         
         # Check that intent was classified correctly
-        intent = message_bus.get_message(goal_id, "intent")
+        intent_message = message_bus.get_message(goal_id, "intent")
+        assert intent_message is not None
+        # Extract intent from new metadata format
+        intent = intent_message["data"]["intent"] if "data" in intent_message else intent_message
         assert intent in ["generative", "tool_use"]  # Should be generative
         
         # Check that response was generated
@@ -256,8 +259,10 @@ class TestPhase1MessageBusIntegration:
         result = orchestrator.execute(goal_id, goal)
         
         # Verify intent was stored
-        intent = message_bus.get_message(goal_id, "intent")
-        assert intent is not None
+        intent_message = message_bus.get_message(goal_id, "intent")
+        assert intent_message is not None
+        # Extract intent from new metadata format
+        intent = intent_message["data"]["intent"] if "data" in intent_message else intent_message
         
         # Verify response was stored
         response = message_bus.get_message(goal_id, "generative_response")

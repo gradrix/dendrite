@@ -101,8 +101,12 @@ class TestPhase0IntentClassification:
         result = intent_classifier.process(goal_id, goal)
         
         # Verify message was stored by retrieving it
-        stored_intent = message_bus.get_message(goal_id, "intent")
-        assert stored_intent is not None
+        stored_message = message_bus.get_message(goal_id, "intent")
+        assert stored_message is not None
+        # New format: message has 'data' dict with 'intent' field
+        assert "data" in stored_message
+        assert "intent" in stored_message["data"]
+        stored_intent = stored_message["data"]["intent"]
         assert stored_intent in ["generative", "tool_use"]
         print(f"✓ Intent stored in message bus: {stored_intent}")
     

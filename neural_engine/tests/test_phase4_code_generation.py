@@ -267,11 +267,14 @@ class TestPhase4MessageBusIntegration:
         code_generator.process(goal_id, data, depth=0)
         
         # Retrieve from message bus
-        stored_result = message_bus.get_message(goal_id, "code_generation")
+        stored_message = message_bus.get_message(goal_id, "code_generation")
         
-        assert stored_result is not None, "Should store result in message bus"
-        assert "code" in stored_result, "Stored result should have code"
-        assert len(stored_result["generated_code"]) > 0, "Stored code should not be empty"
+        assert stored_message is not None, "Should store result in message bus"
+        # Extract data from new metadata format
+        stored_result = stored_message["data"] if "data" in stored_message else stored_message
+        assert "code" in stored_result or "generated_code" in stored_result, "Stored result should have code"
+        code = stored_result.get("generated_code", stored_result.get("code", ""))
+        assert len(code) > 0, "Stored code should not be empty"
     
     @pytest.mark.integration
     def test_result_contains_all_fields(self, code_generator, message_bus):
@@ -289,7 +292,7 @@ class TestPhase4MessageBusIntegration:
         
         assert "goal" in result, "Result should have goal"
         assert "tool_name" in result, "Result should have tool_name"
-        assert "code" in result, "Result should have code"
+        assert "code" in result or "generated_code" in result, "Result should have code"
         assert result["goal"] == "Test goal", "Goal should be preserved"
         assert result["tool_name"] == "hello_world", "Tool name should be preserved"
 

@@ -36,3 +36,30 @@ class OllamaClient:
     def generate(self, prompt):
         response = self.client.generate(model=self.model, prompt=prompt)
         return response
+    
+    def chat(self, messages, options=None):
+        """
+        Chat API with message history support for few-shot learning.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+                     Roles: 'system', 'user', 'assistant'
+            options: Optional dict of generation options (temperature, etc.)
+        
+        Returns:
+            Response dict with 'message' containing 'content'
+        
+        Example:
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant"},
+                {"role": "user", "content": "Hello!"},
+                {"role": "assistant", "content": "Hi there!"},  # Example
+                {"role": "user", "content": "How are you?"}  # Actual query
+            ]
+        """
+        response = self.client.chat(
+            model=self.model, 
+            messages=messages,
+            options=options or {}
+        )
+        return response
