@@ -154,6 +154,9 @@ def execution_store():
             error=None if is_success else 'Rare failure'
         )
     
+    # Update statistics for all tools
+    store.update_statistics()
+    
     yield store
     
     # Cleanup

@@ -303,8 +303,8 @@ class Orchestrator:
             duration_ms=duration_ms,
             metadata={
                 'depth': depth,
-                'result': result,
                 'timestamp': time.time()
+                # Note: Not storing full result in metadata - too large and contains datetime objects
             }
         )
         

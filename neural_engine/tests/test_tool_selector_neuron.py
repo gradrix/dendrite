@@ -23,17 +23,25 @@ class TestToolSelectorNeuron(unittest.TestCase):
         depth = 0
         prompt_template = "Goal: {goal}, Tools: {tools}"
 
-        # Mock the tool registry to return a sample tool definition
-        tool_definitions = [{"name": "get_time_tool", "description": "Gets the current time"}]
+        # Mock the tool registry to return a sample tool definition (as dict, not list!)
+        tool_definitions = {
+            "get_time_tool": {
+                "name": "get_time_tool",
+                "description": "Gets the current time",
+                "module_name": "time_tool",
+                "class_name": "TimeTool"
+            }
+        }
         self.mock_tool_registry.get_all_tool_definitions.return_value = tool_definitions
 
-        # Mock the LLM response
-        llm_response = {'response': json.dumps({"tool_name": "get_time_tool"})}
+        # Mock the LLM response (per-tool voting format)
+        llm_response = {'response': 'YES'}
         self.mock_ollama_client.generate.return_value = llm_response
 
-        # Mock the tool registry to return info for the selected tool
-        tool_info = {"module_name": "time_tool", "class_name": "TimeTool"}
-        self.mock_tool_registry.get_tool_definition.return_value = tool_info
+        # Mock the tool registry to return tool instance
+        mock_tool = MagicMock()
+        mock_tool.get_tool_definition.return_value = tool_definitions["get_time_tool"]
+        self.mock_tool_registry.get_tool.return_value = mock_tool
 
         # Patch the _load_prompt method
         with patch.object(self.tool_selector_neuron, '_load_prompt', return_value=prompt_template):

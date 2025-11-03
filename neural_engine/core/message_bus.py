@@ -2,6 +2,16 @@ import redis
 import uuid
 import json
 import os
+from datetime import datetime, date
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        return super().default(obj)
+
 
 class MessageBus:
     def __init__(self):
@@ -17,7 +27,7 @@ class MessageBus:
     def add_message(self, goal_id, message_type, message):
         key = f"goal_{goal_id}:{message_type}"
         if isinstance(message, (list, dict)):
-            message = json.dumps(message)
+            message = json.dumps(message, cls=DateTimeEncoder)
         self.redis.lpush(key, message)
 
     def get_message(self, goal_id, message_type):

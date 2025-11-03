@@ -153,6 +153,9 @@ def execution_store():
             success=True
         )
     
+    # Update statistics for all tools
+    store.update_statistics()
+    
     yield store
     
     # Cleanup - do this before close()
