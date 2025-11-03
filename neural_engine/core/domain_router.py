@@ -47,8 +47,8 @@ class DomainRouter:
         
         # Vote each domain
         domains = [
-            ("memory", "personal information, remembering facts, storing/recalling names, preferences, user details"),
-            ("strava", "fitness activities, running, cycling, workouts, exercise data"),
+            ("memory", "personal user information stored previously: remembering user's name, preferences, past conversations, things the user told you to remember"),
+            ("strava", "fitness activities, running, cycling, workouts, exercise data from Strava"),
             ("calculator", "mathematical calculations, numbers, arithmetic operations"),
         ]
         
