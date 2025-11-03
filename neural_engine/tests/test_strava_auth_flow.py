@@ -1,7 +1,23 @@
 """
 Tests for Strava authentication flow and credential handling.
+
+This file contains both unit tests (mocked) and integration tests (real API).
+
+Unit Tests (always run):
+- Test authentication requirements
+- Test credential storage/retrieval
+- Test error handling
+- Use mocks, no real API calls
+
+Integration Tests (optional, marked with @pytest.mark.requires_strava_auth):
+- Test with real Strava credentials
+- Make actual API calls
+- Skipped if credentials not provided
+- See docs/STRAVA_INTEGRATION_TESTING.md for setup instructions
 """
 import pytest
+import os
+import json
 from unittest.mock import Mock, patch
 from neural_engine.core.key_value_store import KeyValueStore
 from neural_engine.tools.strava_get_my_activities_tool import StravaGetMyActivitiesTool
@@ -121,26 +137,65 @@ class TestStravaRealAuth:
     """
     Integration tests using real Strava credentials.
     
-    To run these tests:
-    1. Set STRAVA_COOKIES and STRAVA_TOKEN environment variables
-    2. Run with: pytest -v -m requires_strava_auth
+    These tests make actual API calls to Strava and are skipped if credentials are not available.
     
-    These tests are skipped in CI and require manual execution.
+    To run these tests, provide credentials via environment variables:
+    
+        export STRAVA_COOKIES='{"strava_session": "your_session_cookie"}'
+        export STRAVA_TOKEN='your_csrf_token'
+        pytest -v -m requires_strava_auth
+    
+    Or store credentials in KeyValueStore:
+    
+        python3 -c "
+        from neural_engine.core.key_value_store import KeyValueStore
+        kv = KeyValueStore()
+        kv.set('strava_cookies', {'strava_session': 'your_session'})
+        kv.set('strava_token', 'your_token')
+        "
+    
+    For detailed instructions on getting credentials:
+        See docs/STRAVA_INTEGRATION_TESTING.md
     """
     
     @pytest.fixture
     def real_credentials(self, kv_store):
-        """Load real Strava credentials from environment."""
-        import os
+        """
+        Load real Strava credentials from environment or KeyValueStore.
         
-        cookies = os.getenv('STRAVA_COOKIES')
-        token = os.getenv('STRAVA_TOKEN')
+        Priority:
+        1. Environment variables (STRAVA_COOKIES, STRAVA_TOKEN)
+        2. Existing KeyValueStore credentials
+        3. Skip test if neither available
+        """
+        # Try environment variables first
+        cookies_env = os.getenv('STRAVA_COOKIES')
+        token_env = os.getenv('STRAVA_TOKEN')
         
-        if not cookies or not token:
-            pytest.skip("Real Strava credentials not provided")
-        
-        kv_store.set("strava_cookies", cookies)
-        kv_store.set("strava_token", token)
+        if cookies_env and token_env:
+            # Parse JSON from environment
+            try:
+                cookies = json.loads(cookies_env) if isinstance(cookies_env, str) else cookies_env
+                kv_store.set("strava_cookies", cookies)
+                kv_store.set("strava_token", token_env)
+                print(f"\n✓ Using Strava credentials from environment variables")
+            except json.JSONDecodeError as e:
+                pytest.skip(f"Invalid JSON in STRAVA_COOKIES environment variable: {e}")
+        else:
+            # Try existing credentials in KeyValueStore
+            existing_cookies = kv_store.get("strava_cookies")
+            existing_token = kv_store.get("strava_token")
+            
+            if existing_cookies and existing_token:
+                print(f"\n✓ Using existing Strava credentials from KeyValueStore")
+            else:
+                pytest.skip(
+                    "Real Strava credentials not provided. "
+                    "Set STRAVA_COOKIES and STRAVA_TOKEN environment variables, "
+                    "Real Strava credentials not provided. "
+                    "Set STRAVA_COOKIES and STRAVA_TOKEN environment variables, "
+                    "or see docs/STRAVA_INTEGRATION_TESTING.md for setup instructions."
+                )
         
         yield kv_store
         
@@ -150,17 +205,24 @@ class TestStravaRealAuth:
         """
         Test with real Strava credentials.
         This actually calls the Strava API.
+        
+        This test validates:
+        - Credentials are accepted by Strava API
+        - API returns 200 OK (not 401/403)
+        - Response structure is correct
+        - Activities can be retrieved (even if empty list)
         """
         tool = StravaGetMyActivitiesTool()
         result = tool.execute(per_page=5)
         
         # Should succeed with real data
-        assert result['success'] is True
+        assert result['success'] is True, f"API call failed: {result.get('error', 'Unknown error')}"
         assert 'data' in result or 'activities' in result
         
-        # Verify we got actual activities
+        # Verify we got actual activities (or empty list if no activities)
         activities = result.get('data') or result.get('activities', [])
         assert isinstance(activities, list)
+        print(f"\n✓ Successfully retrieved {len(activities)} activities from Strava API")
         
         # If there are activities, verify structure
         if len(activities) > 0:
@@ -168,6 +230,42 @@ class TestStravaRealAuth:
             assert 'id' in activity
             assert 'name' in activity
             assert 'distance' in activity or 'moving_time' in activity
+            print(f"✓ Activity structure valid: '{activity.get('name', 'Unnamed')}' ({activity.get('type', 'Unknown')})")
+    
+    def test_real_auth_connectivity(self, real_credentials):
+        """
+        Test basic connectivity to Strava API.
+        
+        This is a lightweight test that just verifies:
+        - Network connectivity to strava.com
+        - Credentials are accepted (200 OK, not 401/403)
+        - API is responding (not 500/503)
+        """
+        # Use activities endpoint with minimal data request
+        tool = StravaGetMyActivitiesTool()
+        result = tool.execute(per_page=1)  # Request only 1 activity
+        
+        # Success means credentials work and API is reachable
+        if result['success']:
+            print(f"\n✓ Strava API connectivity verified")
+            print(f"✓ Credentials accepted by Strava")
+        else:
+            # If it fails, provide helpful error message
+            error = result.get('error', 'Unknown error')
+            if '401' in str(error) or 'Unauthorized' in str(error):
+                pytest.fail(
+                    "Credentials rejected by Strava (401 Unauthorized). "
+                    "Your session may have expired. Get fresh credentials from browser."
+                )
+            elif '403' in str(error) or 'Forbidden' in str(error):
+                pytest.fail(
+                    "Access forbidden by Strava (403 Forbidden). "
+                    "Check if your account has API access enabled."
+                )
+            else:
+                pytest.fail(f"Strava API call failed: {error}")
+        
+        assert result['success'] is True
     
     def test_real_auth_multiple_tools(self, real_credentials):
         """
