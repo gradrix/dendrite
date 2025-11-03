@@ -24,26 +24,36 @@ class OllamaClient:
         """
         Checks if the required model is available locally and pulls it if not.
         """
-        try:
-            local_models = self.client.list()["models"]
-            model_names = [model["model"] for model in local_models]
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                local_models = self.client.list()["models"]
+                model_names = [model["model"] for model in local_models]
 
-            # The API might return the model name with a default tag, e.g., 'mistral:latest'
-            # We should check if our model name is a prefix of any of the available models.
-            if any(m.startswith(self.model) for m in model_names):
-                print(f"Model '{self.model}' is available locally.")
+                # The API might return the model name with a default tag, e.g., 'mistral:latest'
+                # We should check if our model name is a prefix of any of the available models.
+                if any(m.startswith(self.model) for m in model_names):
+                    print(f"Model '{self.model}' is available locally.")
+                    return
+
+                print(f"Model '{self.model}' not found locally. Pulling from registry...")
+                self.client.pull(self.model)
+                print(f"Model '{self.model}' pulled successfully.")
                 return
 
-            print(f"Model '{self.model}' not found locally. Pulling from registry...")
-            self.client.pull(self.model)
-            print(f"Model '{self.model}' pulled successfully.")
-
-        except Exception as e:
-            # If we can't connect to Ollama at all, we'll get an error here.
-            # The user will see this when the app starts up.
-            print(f"Error checking for or pulling model '{self.model}': {e}")
-            # We'll re-raise for now to make the startup failure obvious.
-            raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
+                    print(f"Retrying in {retry_delay} seconds...")
+                    import time
+                    time.sleep(retry_delay)
+                else:
+                    # Final attempt failed
+                    print(f"Error checking for or pulling model '{self.model}': {e}")
+                    # Re-raise to make the startup failure obvious
+                    raise
 
     def generate(self, prompt, context: str = None, check_tokens: bool = True):
         """

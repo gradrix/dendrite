@@ -80,17 +80,47 @@ jobs:
             sleep 1
           done
 
-      - name: Pull a tiny model for CI
+      - name: Pull mistral model for CI
         run: |
           set -e
-          curl -sS -X POST "$OLLAMA_HOST/api/pull" -d "{\"name\":\"$OLLAMA_MODEL\"}"
-          # wait until it appears in /api/tags
+          echo "Pulling model $OLLAMA_MODEL..."
+          curl -sS -X POST "$OLLAMA_HOST/api/pull" -d "{\"name\":\"$OLLAMA_MODEL\"}" &
+          PULL_PID=$!
+          
+          # Wait for model to appear in /api/tags (with timeout)
+          echo "Waiting for model to be available..."
           for i in {1..600}; do
-            curl -s "$OLLAMA_HOST/api/tags" | grep -q "$OLLAMA_MODEL" && break || sleep 1
+            if curl -s "$OLLAMA_HOST/api/tags" | grep -q "$OLLAMA_MODEL"; then
+              echo "Model $OLLAMA_MODEL is available"
+              break
+            fi
+            if [ $i -eq 600 ]; then
+              echo "ERROR: Model pull timed out after 600 seconds"
+              echo "Available models:"
+              curl -s "$OLLAMA_HOST/api/tags"
+              exit 1
+            fi
+            sleep 1
           done
+          
+          # Verify model is actually usable
+          echo "Verifying model is usable..."
+          RESPONSE=$(curl -s -X POST "$OLLAMA_HOST/api/generate" \
+            -d "{\"model\":\"$OLLAMA_MODEL\",\"prompt\":\"test\",\"stream\":false}")
+          
+          if echo "$RESPONSE" | grep -q "error"; then
+            echo "ERROR: Model verification failed"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          
+          echo "Model verified successfully"
 
       - name: Build tests image
         run: docker compose build tests
+
+      - name: Run migrations
+        run: docker compose --profile cpu run --rm tests bash -c "./scripts/utils/migrate.sh"
 
       - name: Run pytest in tests service
         run: docker compose --profile cpu run --rm tests pytest -v
