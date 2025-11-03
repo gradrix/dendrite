@@ -112,6 +112,14 @@ if docker compose config > /dev/null 2>&1; then
         echo -e "${RED}✗${NC} ollama-cpu service missing"
         FAILURES=$((FAILURES + 1))
     fi
+    
+    # Check postgres init script paths are correct
+    if grep -q "./scripts/db/init_db.sql" docker-compose.yml; then
+        echo -e "${GREEN}✓${NC} Postgres init scripts path is correct (scripts/db/)"
+    else
+        echo -e "${RED}✗${NC} Postgres init scripts path is wrong (should be scripts/db/)"
+        FAILURES=$((FAILURES + 1))
+    fi
 else
     echo -e "${RED}✗${NC} docker-compose.yml configuration error"
     FAILURES=$((FAILURES + 1))

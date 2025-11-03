@@ -28,11 +28,18 @@ else
     echo "❌ Redis is not running"
 fi
 
-if docker compose ps ollama | grep -q "Up"; then
+if docker compose ps ollama | grep -q "Up" || docker compose ps ollama-cpu | grep -q "Up"; then
     echo "✅ Ollama is running"
-    if docker compose exec -T ollama curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+    # Try both service names for exec
+    if docker compose exec -T ollama curl -s http://localhost:11434/api/tags > /dev/null 2>&1 || \
+       docker compose exec -T ollama-cpu curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
         echo "   └─ Ollama API is responding"
-        MODEL_COUNT=$(docker compose exec -T ollama ollama list | tail -n +2 | wc -l)
+        # Try both for model list
+        if docker compose exec -T ollama ollama list > /dev/null 2>&1; then
+            MODEL_COUNT=$(docker compose exec -T ollama ollama list | tail -n +2 | wc -l)
+        else
+            MODEL_COUNT=$(docker compose exec -T ollama-cpu ollama list 2>/dev/null | tail -n +2 | wc -l || echo "0")
+        fi
         echo "   └─ $MODEL_COUNT model(s) available"
     else
         echo "   └─ ⚠️  Ollama API not responding"
