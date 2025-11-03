@@ -167,20 +167,33 @@ class TestStravaRealAuth:
         1. Environment variables (STRAVA_COOKIES, STRAVA_TOKEN)
         2. Existing KeyValueStore credentials
         3. Skip test if neither available
+        
+        STRAVA_COOKIES format: Semicolon-delimited string as copied from browser
+        Example: '_strava4_session=abc123; CloudFront-Policy=xyz; CloudFront-Signature=def'
         """
         # Try environment variables first
         cookies_env = os.getenv('STRAVA_COOKIES')
         token_env = os.getenv('STRAVA_TOKEN')
         
         if cookies_env and token_env:
-            # Parse JSON from environment
+            # Parse semicolon-delimited cookie string into dict
             try:
-                cookies = json.loads(cookies_env) if isinstance(cookies_env, str) else cookies_env
+                cookies = {}
+                for cookie_pair in cookies_env.split(';'):
+                    cookie_pair = cookie_pair.strip()
+                    if '=' in cookie_pair:
+                        key, value = cookie_pair.split('=', 1)
+                        cookies[key.strip()] = value.strip()
+                
+                if not cookies:
+                    pytest.skip("STRAVA_COOKIES is empty or invalid format. Expected: 'key1=value1; key2=value2'")
+                
                 kv_store.set("strava_cookies", cookies)
                 kv_store.set("strava_token", token_env)
                 print(f"\n✓ Using Strava credentials from environment variables")
-            except json.JSONDecodeError as e:
-                pytest.skip(f"Invalid JSON in STRAVA_COOKIES environment variable: {e}")
+                print(f"  Parsed {len(cookies)} cookie(s): {list(cookies.keys())}")
+            except Exception as e:
+                pytest.skip(f"Failed to parse STRAVA_COOKIES: {e}. Expected format: 'key1=value1; key2=value2'")
         else:
             # Try existing credentials in KeyValueStore
             existing_cookies = kv_store.get("strava_cookies")
@@ -190,8 +203,6 @@ class TestStravaRealAuth:
                 print(f"\n✓ Using existing Strava credentials from KeyValueStore")
             else:
                 pytest.skip(
-                    "Real Strava credentials not provided. "
-                    "Set STRAVA_COOKIES and STRAVA_TOKEN environment variables, "
                     "Real Strava credentials not provided. "
                     "Set STRAVA_COOKIES and STRAVA_TOKEN environment variables, "
                     "or see docs/STRAVA_INTEGRATION_TESTING.md for setup instructions."

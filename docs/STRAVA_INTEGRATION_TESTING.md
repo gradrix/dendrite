@@ -22,29 +22,29 @@ This project includes both **unit tests** (mocked) and **optional integration te
 
 ## Running Integration Tests
 
-### Option 1: Environment Variables
+### Option 1: Environment Variables (Temporary)
 
 ```bash
-# Set credentials as environment variables
-export STRAVA_COOKIES='{"strava_session": "your_session_cookie"}'
-export STRAVA_TOKEN='your_csrf_token'
+# Set credentials for this session (cookie string format from browser)
+export STRAVA_COOKIES='_strava4_session=your_session_value; other_cookie=value'
+export STRAVA_TOKEN='your_csrf_token_here'
 
 # Run integration tests
 pytest -v -m requires_strava_auth
 ```
 
-### Option 2: Hardcoded Test Credentials (Development)
+### Option 2: Environment Variables in .env File (Local Development)
 
-Edit `neural_engine/tests/conftest.py` and add:
+```bash
+# Create .env file (add to .gitignore!)
+cat > .env << 'EOF'
+STRAVA_COOKIES='_strava4_session=your_session_value; other_cookie=value'
+STRAVA_TOKEN='your_csrf_token'
+EOF
 
-```python
-# conftest.py
-import os
-
-# Optional: Add your real Strava credentials here for local testing
-# WARNING: Don't commit real credentials! Add conftest.py to .gitignore
-TEST_STRAVA_COOKIES = os.getenv('STRAVA_COOKIES', None)
-TEST_STRAVA_TOKEN = os.getenv('STRAVA_TOKEN', None)
+# Load and run tests
+source .env
+pytest -v -m requires_strava_auth
 ```
 
 ### Option 3: Store in KeyValueStore (Persistent)
@@ -54,7 +54,8 @@ TEST_STRAVA_TOKEN = os.getenv('STRAVA_TOKEN', None)
 python3 -c "
 from neural_engine.core.key_value_store import KeyValueStore
 kv = KeyValueStore()
-kv.set('strava_cookies', {'strava_session': 'your_session_cookie'})
+# Store as semicolon-delimited string (as copied from browser)
+kv.set('strava_cookies', '_strava4_session=your_session_value; other_cookie=value')
 kv.set('strava_token', 'your_csrf_token')
 print('Credentials stored!')
 "
@@ -87,13 +88,12 @@ pytest -v -m requires_strava_auth
 
 ### Example Credentials Format
 
-```json
-{
-  "cookies": {
-    "strava_session": "ey1234567890abcdef..."
-  },
-  "token": "csrf_token_value_here"
-}
+```bash
+# Cookies (semicolon-delimited string as copied from browser)
+STRAVA_COOKIES='_strava4_session=a1b2c3d4e5f6...; CloudFront-Policy=eyJ...; CloudFront-Signature=abc...'
+
+# CSRF Token (string)
+STRAVA_TOKEN='xyz123abc456...'
 ```
 
 ## Security Notes
