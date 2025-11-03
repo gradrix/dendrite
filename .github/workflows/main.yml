@@ -120,7 +120,7 @@ jobs:
         run: docker compose build tests
 
       - name: Run migrations
-        run: docker compose --profile cpu run --rm tests bash -c "./scripts/utils/migrate.sh"
+        run: docker compose --profile cpu run --rm tests bash -c "./scripts/utils/migrate-internal.sh"
 
       - name: Run pytest in tests service
         run: docker compose --profile cpu run --rm tests pytest -v
