@@ -12,8 +12,28 @@ services:
     depends_on:
       redis:
         condition: service_started
+      ollama-cpu:
+        condition: service_started
+    profiles:
+      - cpu
+
+  app-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+      - kv_store:/app/var
+    environment:
+      - REDIS_HOST=redis
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      redis:
+        condition: service_started
       ollama:
         condition: service_started
+    profiles:
+      - gpu
 
   redis:
     image: redis:7-alpine
@@ -46,6 +66,10 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    # GPU support is optional - enable with: docker compose --profile gpu up
+    # CI and CPU-only environments will work without GPU
+    profiles:
+      - gpu
     deploy:
       resources:
         reservations:
@@ -53,8 +77,43 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+  
+  # CPU-only Ollama service for CI/testing environments without GPU
+  ollama-cpu:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles:
+      - cpu
 
   tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      redis:
+        condition: service_started
+      ollama-cpu:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: mistral
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: dendrite
+      POSTGRES_USER: dendrite
+      POSTGRES_PASSWORD: dendrite_pass
+    volumes:
+      - .:/app
+    command: pytest
+    profiles:
+      - cpu
+
+  tests-gpu:
     build:
       context: .
       dockerfile: Dockerfile.test
@@ -76,6 +135,8 @@ services:
     volumes:
       - .:/app
     command: pytest
+    profiles:
+      - gpu
 
 volumes:
   redis_data:

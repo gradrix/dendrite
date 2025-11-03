@@ -1,84 +1,165 @@
-# Dendrite Scripts
+# Scripts Directory# Dendrite Scripts
 
-This directory contains convenience scripts for managing the Dendrite Neural Engine.
 
-## 🚀 Quick Start
 
-```bash
-# First time setup
-./scripts/setup.sh
+Utility scripts for development, testing, and Docker operations.This directory contains convenience scripts for managing the Dendrite Neural Engine.
 
-# Start the system
-./scripts/start.sh
 
-# Run a goal
+
+## Organization## 🚀 Quick Start
+
+
+
+- **docker/** - Docker container management scripts```bash
+
+- **testing/** - Test execution scripts  # First time setup
+
+- **demos/** - Demo and example scripts./scripts/setup.sh
+
+- **db/** - Database initialization files
+
+- **utils/** - General utilities (logs, migration, etc.)# Start the system
+
+- **run.sh** - Main goal execution script (kept at root for convenience)./scripts/start.sh
+
+
+
+## Docker Operations (`docker/`)# Run a goal
+
 ./scripts/run.sh "How many running activities did I have in September?"
 
-# Stop everything
-./scripts/stop.sh
-```
+- `start.sh` - Start all services
 
-## 📋 Available Scripts
+- `stop.sh` - Stop all services# Stop everything
+
+- `dev.sh` - Development mode with code reloading./scripts/stop.sh
+
+- `shell.sh` - Access container shell```
+
+- `reset.sh` - Clear volumes and restart
+
+- `setup.sh` - Initial setup## 📋 Available Scripts
+
+- `health.sh` - Check service health
 
 ### Startup & Management
 
-- **`start.sh`** - Start all services (Redis, Ollama, App)
-  - Waits for services to be healthy
-  - Automatically pulls required LLM models if missing
-  - Shows status of each component
+## Testing (`testing/`)
 
-- **`stop.sh`** - Stop all services gracefully
+- **`start.sh`** - Start all services (Redis, Ollama, App)
+
+- `test.sh` - Run complete test suite  - Waits for services to be healthy
+
+- `test-unit.sh` - Unit tests only  - Automatically pulls required LLM models if missing
+
+- `test-integration.sh` - Integration tests  - Shows status of each component
+
+- `test-watch.sh` - Watch mode
+
+- `test-debug.sh` - Debug mode- **`stop.sh`** - Stop all services gracefully
+
+- `test-local.sh` - Run locally (no Docker)
 
 - **`reset.sh`** - Reset everything (⚠️ deletes all data and volumes)
 
+## Demos (`demos/`)
+
 - **`dev.sh`** - Start in development mode
-  - Hot-reload enabled (code changes reflected immediately)
-  - Follows application logs
 
-- **`run.sh`** - Execute a goal with the Neural Engine
+Python scripts demonstrating features:  - Hot-reload enabled (code changes reflected immediately)
+
+- Phase 8b/c/d demos  - Follows application logs
+
+- Phase 9a/b/c demos  
+
+- Stage 3 integration demo- **`run.sh`** - Execute a goal with the Neural Engine
+
   ```bash
-  ./scripts/run.sh "your goal here"
+
+## Database (`db/`)  ./scripts/run.sh "your goal here"
+
   ```
 
-### Testing
+- `init_db.sql` - Schema initialization
 
-- **`test.sh`** - Run all tests in Docker (recommended)
+- `init_extensions.sql` - PostgreSQL extensions### Testing
+
+
+
+## Utilities (`utils/`)- **`test.sh`** - Run all tests in Docker (recommended)
+
   ```bash
-  ./scripts/test.sh                    # All tests
-  ./scripts/test.sh -k test_specific   # Specific test
-  ./scripts/test.sh -v                 # Verbose
+
+- `logs.sh` - View service logs  ./scripts/test.sh                    # All tests
+
+- `migrate.sh` - Run migrations  ./scripts/test.sh -k test_specific   # Specific test
+
+- `help.sh` - Show help  ./scripts/test.sh -v                 # Verbose
+
+- `warm_cache.py` - Pre-populate cache  ```
+
+
+
+## Quick Start- **`test-debug.sh`** - Run tests with VS Code debugger attached
+
+  ```bash
+
+```bash  ./scripts/test-debug.sh              # Start tests in debug mode
+
+# Setup (first time)  # Then press F5 in VS Code and select "Python: Attach to Docker"
+
+./scripts/docker/setup.sh  # Set breakpoints and debug interactively!
+
   ```
 
-- **`test-debug.sh`** - Run tests with VS Code debugger attached
-  ```bash
-  ./scripts/test-debug.sh              # Start tests in debug mode
-  # Then press F5 in VS Code and select "Python: Attach to Docker"
-  # Set breakpoints and debug interactively!
-  ```
+# Start services
 
-- **`test-local.sh`** - Run tests locally (faster iteration)
+./scripts/docker/start.sh- **`test-local.sh`** - Run tests locally (faster iteration)
+
   - Uses local Python environment
-  - Still requires Docker for Redis/Ollama
+
+# Run a goal  - Still requires Docker for Redis/Ollama
+
+./scripts/run.sh "Remember my name is Alice"
 
 - **`test-unit.sh`** - Run only unit tests (fast)
 
-- **`test-integration.sh`** - Run only integration tests (it_*.py files)
+# Run tests
 
-- **`test-watch.sh`** - Watch mode for TDD
-  - Automatically re-runs tests on file changes
-  - Requires `pytest-watch` (auto-installed)
+./scripts/testing/test.sh- **`test-integration.sh`** - Run only integration tests (it_*.py files)
 
-### Utilities
 
-- **`setup.sh`** - One-time setup for new installations
-  - Starts all services
-  - Pulls required models
-  - Verifies installation
 
-- **`logs.sh`** - View logs from services
-  ```bash
-  ./scripts/logs.sh          # All services
-  ./scripts/logs.sh app      # Just app logs
+# Stop services- **`test-watch.sh`** - Watch mode for TDD
+
+./scripts/docker/stop.sh  - Automatically re-runs tests on file changes
+
+```  - Requires `pytest-watch` (auto-installed)
+
+
+
+## Docker Profiles### Utilities
+
+
+
+**CPU (no GPU):**- **`setup.sh`** - One-time setup for new installations
+
+```bash  - Starts all services
+
+docker compose --profile cpu up -d  - Pulls required models
+
+```  - Verifies installation
+
+
+
+**GPU (NVIDIA):**- **`logs.sh`** - View logs from services
+
+```bash  ```bash
+
+docker compose --profile gpu up -d  ./scripts/logs.sh          # All services
+
+```  ./scripts/logs.sh app      # Just app logs
+
   ./scripts/logs.sh ollama   # Just Ollama logs
   ```
 
