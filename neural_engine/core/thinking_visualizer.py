@@ -53,13 +53,25 @@ class ThinkingVisualizer:
     def show_cache_check(self, cache_result: Optional[Dict]):
         """Show cache lookup result."""
         if cache_result:
-            print("💨 CACHE HIT (System 1 - Fast Path)")
-            print(f"   Similarity: {cache_result.get('similarity', 0):.0%}")
-            print(f"   Cached pathway: {cache_result.get('pathway_id', 'unknown')}")
-            print(f"   Tools: {', '.join(cache_result.get('tools_used', []))}")
-            print(f"   Usage count: {cache_result.get('usage_count', 0)}")
-            print(f"   ⚡ Executing cached pathway...\n")
-            self._add_step("cache_hit", cache_result)
+            cache_type = cache_result.get('cache_type', 'pathway')
+            
+            if cache_type == 'pattern':
+                # Intent pattern cache (existing)
+                print("💨 CACHE HIT (Intent Pattern Cache)")
+                print(f"   Intent: {cache_result.get('intent', 'unknown')}")
+                print(f"   Confidence: {cache_result.get('confidence', 0):.0%}")
+                print()
+                self._add_step("cache_hit", cache_result)
+            else:
+                # Neural pathway cache (new!)
+                print("💨 PATHWAY CACHE HIT (System 1 - Fast Path)")
+                print(f"   Similarity: {cache_result.get('similarity', 0):.0%}")
+                print(f"   Confidence: {cache_result.get('confidence_score', 0):.0%}")
+                print(f"   Cached pathway: {cache_result.get('pathway_id', 'unknown')[:8]}...")
+                print(f"   Tools: {', '.join(cache_result.get('tools_used', []))}")
+                print(f"   Usage count: {cache_result.get('usage_count', 0)}")
+                print(f"   ⚡ Executing cached pathway...\n")
+                self._add_step("pathway_cache_hit", cache_result)
         else:
             print("🧠 CACHE MISS (System 2 - Full Reasoning)")
             print("   No similar cached pathway found")
@@ -196,7 +208,12 @@ class ThinkingVisualizer:
             "total_steps": len(self.steps),
             "duration_seconds": duration,
             "steps": self.steps,
-            "cache_hit": any(s['type'] == 'cache_hit' for s in self.steps),
+            # Check for both intent pattern cache AND neural pathway cache
+            "cache_hit": any(s['type'] in ['cache_hit', 'pathway_cache_hit'] for s in self.steps),
+            "pathway_cache_hit": any(s['type'] == 'pathway_cache_hit' for s in self.steps),
+            "intent_cache_hit": any(s['type'] == 'cache_hit' for s in self.steps),
+            # Note: 'pattern_suggested' is for GoalDecompositionLearner (not integrated yet)
+            # 'cache_hit' tracks IntentClassifierNeuron's PatternCache (which IS working)
             "pattern_used": any(s['type'] == 'pattern_suggested' for s in self.steps),
             "errors_occurred": any(s['type'] == 'error' for s in self.steps),
             "recovery_successful": any(s['type'] == 'recovery_success' for s in self.steps)

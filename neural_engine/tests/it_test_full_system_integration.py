@@ -3,39 +3,38 @@ Full System Integration Test: End-to-End Flow
 
 This test validates that ALL components work together:
 - Orchestrator (goal decomposition, tool selection, execution)
+- Semantic Intent Classification (Phase 2.3) - keyword-enhanced intent detection
+- Result Validator (Phase 2.4) - three-tier validation before caching
+- Neural Pathway Cache (Phase 2.1) - System 1/2 thinking
 - Error Recovery (retry, fallback, adapt)
 - Tool Discovery (semantic search, ranking)
+- Tool Forge (dynamic tool creation)
 - Execution Store (tracking, analytics)
-- Autonomous Improvement (detect, investigate, improve)
-- Version Management (track, rollback)
-- Lifecycle Management (sync, cleanup)
 
 Test Scenarios:
-1. Simple successful execution
-2. Execution with transient error → recovery
-3. Execution with wrong tool → fallback
-4. Execution with parameter error → adaptation
-5. Multiple tools in sequence
-6. Tool improvement detection and deployment
-7. Version rollback on regression
+1. Simple successful execution (existing tool - add_numbers)
+2. Tool creation flow (new tool - fibonacci sequence generator)
+3. Semantic intent classification validation
+4. Result validator validation (confidence scoring)
+5. Pathway cache validation (first run slow, second run fast)
+6. Execution with transient error → recovery
+7. Execution with wrong tool → fallback
+8. Component integration health check
 
-This is the MOST IMPORTANT test - it validates the entire system works as one.
+This is the MOST IMPORTANT test - it validates Phase 2.1 + 2.3 + 2.4 work together.
 
-Run with: bash scripts/test.sh neural_engine/tests/it_test_full_system_integration.py
+Run with: docker compose run --rm tests pytest neural_engine/tests/it_test_full_system_integration.py -v
 """
 
 import unittest
 import time
-from neural_engine.core.orchestrator import Orchestrator
-from neural_engine.core.ollama_client import OllamaClient
+import os
+import shutil
+from neural_engine.core.system_factory import create_neural_engine
 from neural_engine.core.tool_registry import ToolRegistry
-from neural_engine.core.execution_store import ExecutionStore
-from neural_engine.core.error_recovery_neuron import ErrorRecoveryNeuron
-from neural_engine.core.tool_discovery import ToolDiscovery
-from neural_engine.tools.test_transient_tool import TestTransientTool
 
 
-class TestFullSystemIntegration(unittest.TestCase):
+class TestFullSystemIntegrationWithValidation(unittest.TestCase):
     """
     End-to-end integration tests for the complete system.
     

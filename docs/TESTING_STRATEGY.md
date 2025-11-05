@@ -1,5 +1,83 @@
 # Testing Strategy for Autonomous Improvement
 
+## Test Hierarchy & Classification
+
+Understanding the different levels of testing in this project:
+
+### 1. Unit Tests (`test_*.py`)
+- **Scope**: Single component/class in isolation
+- **Mocks**: External dependencies mocked (LLM, database, Redis)
+- **Speed**: Fast (< 1 second per test)
+- **Location**: `neural_engine/tests/test_<component>.py`
+- **Example**: `test_result_validator_neuron.py` - Tests validator tiers independently
+- **When to use**: Testing individual neuron logic, data transformations, algorithms
+
+### 2. Integration Tests (`test_*_integration.py`)
+- **Scope**: Multiple components working together
+- **Mocks**: Some mocking (typically LLM/external services), real internal components
+- **Speed**: Medium (1-10 seconds per test)
+- **Location**: `neural_engine/tests/test_<feature>_integration.py`
+- **Example**: `test_validator_integration.py` - Tests orchestrator + validator interaction
+- **When to use**: Testing component interactions, data flow, integration points
+
+### 3. Full System Tests (`it_test_*.py`)
+- **Scope**: Complete system with all neurons
+- **Mocks**: Minimal mocking (may mock LLM for determinism), real components
+- **Speed**: Slow (10-60 seconds per test)
+- **Location**: `neural_engine/tests/it_test_full_system_integration.py`
+- **Example**: Full orchestrator pipeline from goal → intent → tool → result
+- **When to use**: Testing complete features, end-to-end scenarios, system behavior
+
+### 4. End-to-End Tests (`./scripts/run.sh ask`)
+- **Scope**: Production-like environment with Docker services
+- **Mocks**: None - real Ollama, PostgreSQL, Redis, Chroma
+- **Speed**: Very slow (1-10 minutes per test)
+- **Location**: Executed via `./scripts/run.sh ask "goal"` or demos
+- **Example**: `./scripts/run.sh ask "What is 2 plus 2?"` - Real LLM calls, real caching
+- **When to use**: Final validation, user acceptance testing, performance benchmarking
+
+### Testing Decision Matrix
+
+| **Testing Level** | **Use When** | **Pros** | **Cons** |
+|-------------------|--------------|----------|----------|
+| **Unit** | Developing new neuron | Fast, isolated, easy to debug | Doesn't catch integration issues |
+| **Integration** | Connecting components | Tests real interactions | Slower, more setup |
+| **Full System** | Major features complete | Tests system behavior | Very slow, harder to isolate failures |
+| **E2E** | Release readiness | Production-like, real behavior | Slowest, requires Docker services |
+
+### Test Coverage Goals
+
+- **Unit Tests**: 80%+ coverage of individual neurons
+- **Integration Tests**: All major feature interactions
+- **Full System Tests**: Key user scenarios (5-10 tests)
+- **E2E Tests**: Critical paths (2-3 smoke tests)
+
+### Running Tests
+
+```bash
+# Unit tests (fast, run frequently)
+docker compose run --rm tests pytest neural_engine/tests/test_result_validator_neuron.py -v
+
+# Integration tests (medium, run before commits)
+docker compose run --rm tests pytest neural_engine/tests/test_validator_integration.py -v
+
+# Full system tests (slow, run before merging)
+docker compose run --rm tests pytest neural_engine/tests/it_test_full_system_integration.py -v
+
+# End-to-end tests (slowest, run before releases)
+./scripts/run.sh ask "What is 2 plus 2?"
+./scripts/run.sh demo
+```
+
+### Current Test Status
+
+Phase 2.4 (Result Validator) Test Coverage:
+- ✅ Unit tests: 26/26 passing (test_result_validator_neuron.py)
+- ✅ Integration tests: 9/9 passing (test_validator_integration.py)
+- ✅ E2E validation: Successful (run.sh ask test with 70% confidence)
+
+---
+
 ## Your Excellent Questions
 
 1. **"If tool fails or regresses - how does the system test if it fixed it?"**

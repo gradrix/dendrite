@@ -70,6 +70,14 @@ class NeuralPathwayCache:
             logger.error(f"Failed to initialize neural pathway cache: {e}")
             raise
     
+    def _get_db_connection(self):
+        """Get database connection from execution store pool."""
+        return self.execution_store._get_connection()
+    
+    def _release_db_connection(self, conn):
+        """Release database connection back to pool."""
+        self.execution_store._release_connection(conn)
+    
     def store_pathway(
         self,
         goal_text: str,
@@ -104,29 +112,36 @@ class NeuralPathwayCache:
             # Calculate complexity score based on steps
             complexity_score = self._calculate_complexity_score(execution_steps)
             
-            # Store in PostgreSQL
-            with self.execution_store.conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO neural_pathways (
-                        goal_text, goal_embedding, goal_type,
-                        execution_steps, tool_names, final_result,
-                        context_hash, complexity_score, execution_time_ms
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING pathway_id
-                """, (
-                    goal_text,
-                    goal_embedding,
-                    goal_type,
-                    json.dumps(execution_steps),
-                    tool_names,
-                    json.dumps(final_result),
-                    context_hash,
-                    complexity_score,
-                    execution_time_ms
-                ))
-                
-                pathway_id = cur.fetchone()[0]
-                self.execution_store.conn.commit()
+            # Store in PostgreSQL using connection pool
+            # Convert numpy array to list for pgvector
+            embedding_list = goal_embedding.tolist() if hasattr(goal_embedding, 'tolist') else goal_embedding
+            
+            conn = self._get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO neural_pathways (
+                            goal_text, goal_embedding, goal_type,
+                            execution_steps, tool_names, final_result,
+                            context_hash, complexity_score, execution_time_ms
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING pathway_id
+                    """, (
+                        goal_text,
+                        embedding_list,
+                        goal_type,
+                        json.dumps(execution_steps),
+                        tool_names,
+                        json.dumps(final_result),
+                        context_hash,
+                        complexity_score,
+                        execution_time_ms
+                    ))
+                    
+                    pathway_id = cur.fetchone()[0]
+                    conn.commit()
+            finally:
+                self._release_db_connection(conn)
             
             # Store in Chroma for vector similarity search
             self.collection.add(
@@ -186,35 +201,45 @@ class NeuralPathwayCache:
                 where={"goal_type": goal_type} if goal_type else None
             )
             
+            logger.info(f"🔍 Chroma query results: {len(results['ids'][0]) if results['ids'] and results['ids'][0] else 0} pathways found")
+            if results['ids'] and results['ids'][0]:
+                logger.info(f"   Distances: {results['distances'][0]}")
+                logger.info(f"   Similarity threshold: {self.similarity_threshold}")
+            
             if not results['ids'] or not results['ids'][0]:
                 logger.info("⚡ Cache miss - no similar pathways found (System 2 reasoning)")
                 return None
             
             # Get detailed pathway info from PostgreSQL
-            pathway_ids = [UUID(pid) for pid in results['ids'][0]]
+            # Keep as strings for psycopg2 compatibility
+            pathway_ids = results['ids'][0]  # Already strings from Chroma
             distances = results['distances'][0]
             
-            with self.execution_store.conn.cursor() as cur:
-                cur.execute("""
-                    SELECT 
-                        pathway_id,
-                        goal_text,
-                        execution_steps,
-                        tool_names,
-                        final_result,
-                        success_count,
-                        failure_count,
-                        execution_time_ms,
-                        is_valid,
-                        invalidation_reason
-                    FROM neural_pathways
-                    WHERE pathway_id = ANY(%s)
-                    ORDER BY 
-                        (success_count::float / NULLIF(success_count + failure_count, 0)) DESC,
-                        success_count DESC
-                """, (pathway_ids,))
-                
-                pathways = cur.fetchall()
+            conn = self._get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT 
+                            pathway_id,
+                            goal_text,
+                            execution_steps,
+                            tool_names,
+                            final_result,
+                            success_count,
+                            failure_count,
+                            execution_time_ms,
+                            is_valid,
+                            invalidation_reason
+                        FROM neural_pathways
+                        WHERE pathway_id::text = ANY(%s)
+                        ORDER BY 
+                            (success_count::float / NULLIF(success_count + failure_count, 0)) DESC,
+                            success_count DESC
+                    """, (pathway_ids,))
+                    
+                    pathways = cur.fetchall()
+            finally:
+                self._release_db_connection(conn)
             
             # Find best valid pathway
             for i, pathway in enumerate(pathways):
@@ -246,14 +271,25 @@ class NeuralPathwayCache:
                 success_rate = success_count / max(1, success_count + failure_count)
                 
                 # Calculate confidence using database function
-                with self.execution_store.conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT calculate_pathway_confidence(%s)",
-                        (pathway_id,)
-                    )
-                    confidence_score = cur.fetchone()[0]
+                conn = self._get_db_connection()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT calculate_pathway_confidence(%s)",
+                            (pathway_id,)
+                        )
+                        confidence_score = cur.fetchone()[0]
+                finally:
+                    self._release_db_connection(conn)
                 
                 # Check if confidence meets threshold
+                logger.info(
+                    f"   Evaluating pathway {pathway_id}: "
+                    f"similarity={similarity_score:.2f} (need >={self.similarity_threshold}), "
+                    f"success_count={success_count} (need >={self.min_success_count}), "
+                    f"confidence={confidence_score:.2f} (need >={self.confidence_threshold})"
+                )
+                
                 if (
                     similarity_score >= self.similarity_threshold and
                     success_count >= self.min_success_count and
@@ -269,9 +305,9 @@ class NeuralPathwayCache:
                     return {
                         'pathway_id': str(pathway_id),
                         'goal_text': cached_goal_text,
-                        'execution_steps': json.loads(execution_steps_json),
-                        'tool_names': tool_names,
-                        'final_result': json.loads(final_result_json),
+                        'execution_steps': execution_steps_json,  # Already deserialized by psycopg2
+                        'tool_names': tool_names,  # Already an array
+                        'final_result': final_result_json,  # Already deserialized by psycopg2
                         'confidence_score': confidence_score,
                         'similarity_score': similarity_score,
                         'success_rate': success_rate,
@@ -305,13 +341,17 @@ class NeuralPathwayCache:
             True if updated successfully
         """
         try:
-            with self.execution_store.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT update_pathway_usage(%s, %s, %s)",
-                    (UUID(pathway_id), success, execution_time_ms)
-                )
-                updated = cur.fetchone()[0]
-                self.execution_store.conn.commit()
+            conn = self._get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT update_pathway_usage(%s, %s, %s)",
+                        (UUID(pathway_id), success, execution_time_ms)
+                    )
+                    updated = cur.fetchone()[0]
+                    conn.commit()
+            finally:
+                self._release_db_connection(conn)
             
             status = "✓ success" if success else "✗ failure"
             logger.info(f"Updated pathway {pathway_id} usage: {status}")
@@ -340,13 +380,17 @@ class NeuralPathwayCache:
         try:
             reason = reason or f"Tool '{tool_name}' removed or unavailable"
             
-            with self.execution_store.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT invalidate_pathways_for_tool(%s, %s)",
-                    (tool_name, reason)
-                )
-                affected_count = cur.fetchone()[0]
-                self.execution_store.conn.commit()
+            conn = self._get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT invalidate_pathways_for_tool(%s, %s)",
+                        (tool_name, reason)
+                    )
+                    affected_count = cur.fetchone()[0]
+                    conn.commit()
+            finally:
+                self._release_db_connection(conn)
             
             logger.warning(
                 f"⚠️  Invalidated {affected_count} pathway(s) due to missing tool: {tool_name}"
@@ -373,17 +417,21 @@ class NeuralPathwayCache:
             True if invalidated successfully
         """
         try:
-            with self.execution_store.conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE neural_pathways
-                    SET 
-                        is_valid = FALSE,
-                        invalidation_reason = %s,
-                        invalidated_at = CURRENT_TIMESTAMP
-                    WHERE pathway_id = %s
-                """, (reason, UUID(pathway_id)))
-                
-                self.execution_store.conn.commit()
+            conn = self._get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE neural_pathways
+                        SET 
+                            is_valid = FALSE,
+                            invalidation_reason = %s,
+                            invalidated_at = CURRENT_TIMESTAMP
+                        WHERE pathway_id = %s
+                    """, (reason, UUID(pathway_id)))
+                    
+                    conn.commit()
+            finally:
+                self._release_db_connection(conn)
             
             logger.warning(f"⚠️  Invalidated pathway {pathway_id}: {reason}")
             return True
@@ -400,33 +448,37 @@ class NeuralPathwayCache:
             Dict with cache metrics
         """
         try:
-            with self.execution_store.conn.cursor() as cur:
-                # Overall stats
-                cur.execute("""
-                    SELECT 
-                        COUNT(*) as total_pathways,
-                        COUNT(*) FILTER (WHERE is_valid = TRUE) as valid_pathways,
-                        COUNT(*) FILTER (WHERE is_valid = FALSE) as invalid_pathways,
-                        AVG(success_count::float / NULLIF(success_count + failure_count, 0)) 
-                            FILTER (WHERE is_valid = TRUE) as avg_success_rate,
-                        AVG(execution_time_ms) FILTER (WHERE is_valid = TRUE) as avg_execution_time_ms,
-                        SUM(success_count) as total_successes,
-                        SUM(failure_count) as total_failures
-                    FROM neural_pathways
-                """)
-                
-                stats = cur.fetchone()
-                
-                # By goal type
-                cur.execute("""
-                    SELECT goal_type, COUNT(*) as count
-                    FROM neural_pathways
-                    WHERE is_valid = TRUE
-                    GROUP BY goal_type
-                    ORDER BY count DESC
-                """)
-                
-                by_type = {row[0]: row[1] for row in cur.fetchall()}
+            conn = self._get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    # Overall stats
+                    cur.execute("""
+                        SELECT 
+                            COUNT(*) as total_pathways,
+                            COUNT(*) FILTER (WHERE is_valid = TRUE) as valid_pathways,
+                            COUNT(*) FILTER (WHERE is_valid = FALSE) as invalid_pathways,
+                            AVG(success_count::float / NULLIF(success_count + failure_count, 0)) 
+                                FILTER (WHERE is_valid = TRUE) as avg_success_rate,
+                            AVG(execution_time_ms) FILTER (WHERE is_valid = TRUE) as avg_execution_time_ms,
+                            SUM(success_count) as total_successes,
+                            SUM(failure_count) as total_failures
+                        FROM neural_pathways
+                    """)
+                    
+                    stats = cur.fetchone()
+                    
+                    # By goal type
+                    cur.execute("""
+                        SELECT goal_type, COUNT(*) as count
+                        FROM neural_pathways
+                        WHERE is_valid = TRUE
+                        GROUP BY goal_type
+                        ORDER BY count DESC
+                    """)
+                    
+                    by_type = {row[0]: row[1] for row in cur.fetchall()}
+            finally:
+                self._release_db_connection(conn)
             
             return {
                 'total_pathways': stats[0],
@@ -454,13 +506,17 @@ class NeuralPathwayCache:
             Number of pathways deleted
         """
         try:
-            with self.execution_store.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT cleanup_old_invalidated_pathways(%s)",
-                    (days_old,)
-                )
-                deleted_count = cur.fetchone()[0]
-                self.execution_store.conn.commit()
+            conn = self._get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT cleanup_old_invalidated_pathways(%s)",
+                        (days_old,)
+                    )
+                    deleted_count = cur.fetchone()[0]
+                    conn.commit()
+            finally:
+                self._release_db_connection(conn)
             
             if deleted_count > 0:
                 logger.info(f"🧹 Cleaned up {deleted_count} old invalidated pathway(s)")

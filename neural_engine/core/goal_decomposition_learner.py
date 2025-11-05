@@ -147,10 +147,15 @@ class GoalDecompositionLearner:
         Returns:
             List of similar patterns with similarity scores
         """
+        # Check if collection has any patterns
+        collection_count = self.collection.count()
+        if collection_count == 0:
+            return []  # No patterns to search
+        
         # Search Chroma for similar goals
         results = self.collection.query(
             query_texts=[goal_text],
-            n_results=min(limit * 2, self.collection.count())  # Get extra for filtering
+            n_results=min(limit * 2, collection_count)  # Get extra for filtering
         )
         
         similar_patterns = []

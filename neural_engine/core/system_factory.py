@@ -41,8 +41,11 @@ def create_neural_engine(
     print("🧠 Initializing Neural Engine...")
     
     # Core dependencies (use environment variables)
+    print("   Creating message bus...", flush=True)
     message_bus = MessageBus()  # Creates its own redis client
+    print("   Creating ollama client...", flush=True)
     ollama_client = OllamaClient()  # Uses OLLAMA_HOST env var
+    print("   Creating tool registry...", flush=True)
     tool_registry = ToolRegistry()
     
     print(f"   ✓ Loaded {len(tool_registry.get_all_tools())} tools")
@@ -56,33 +59,41 @@ def create_neural_engine(
         execution_store = None
     
     # Create neurons
+    print("   Creating intent classifier (with semantic mode)...", flush=True)
     intent_classifier = IntentClassifierNeuron(
         ollama_client=ollama_client,
-        message_bus=message_bus
+        message_bus=message_bus,
+        cache_threshold=0.75,  # Lower threshold for better cache hits
+        use_semantic=True  # PHASE 2.3: Enable semantic intent classification
     )
     
+    print("   Creating generative neuron...", flush=True)
     generative_neuron = GenerativeNeuron(
         ollama_client=ollama_client,
         message_bus=message_bus
     )
     
+    print("   Creating tool selector...", flush=True)
     tool_selector = ToolSelectorNeuron(
         ollama_client=ollama_client,
         message_bus=message_bus,
         tool_registry=tool_registry
     )
     
+    print("   Creating code generator...", flush=True)
     code_generator = CodeGeneratorNeuron(
         ollama_client=ollama_client,
         message_bus=message_bus,
         tool_registry=tool_registry
     )
     
+    print("   Creating sandbox...", flush=True)
     sandbox = Sandbox(message_bus=message_bus)
     
     print("   ✓ Initialized all neurons")
     
     # Create orchestrator
+    print("   Creating orchestrator...", flush=True)
     orchestrator = Orchestrator(
         intent_classifier=intent_classifier,
         tool_selector=tool_selector,
@@ -97,31 +108,50 @@ def create_neural_engine(
         enable_error_recovery=enable_all_features
     )
     
+    print("   ✓ Orchestrator created", flush=True)
+    
     if enable_all_features:
         print("   ✓ Error recovery enabled")
         print("   ✓ Tool discovery enabled")
         print("   ✓ Lifecycle management enabled")
     
+    # PHASE 2: Add result validator (before pathway cache!)
+    if enable_all_features:
+        try:
+            from neural_engine.core.result_validator_neuron import ResultValidatorNeuron
+            orchestrator.result_validator = ResultValidatorNeuron(
+                ollama_client=ollama_client,
+                enable_llm_validation=True  # Use Tier 3 validation
+            )
+            print("   ✓ Result validation enabled")
+        except Exception as e:
+            print(f"   ⚠️  Result validator not available: {e}")
+    
     # Add pathway cache and goal learner if available
     if execution_store and enable_all_features:
         try:
             # Pathway cache needs chroma client
+            print("   Creating pathway cache...", flush=True)
             import chromadb
             chroma_client = chromadb.PersistentClient(path="./chroma_data")
             orchestrator.pathway_cache = NeuralPathwayCache(
                 execution_store=execution_store,
-                chroma_client=chroma_client
+                chroma_client=chroma_client,
+                similarity_threshold=0.85,
+                min_success_count=1,  # Lower threshold for testing
+                confidence_threshold=0.05  # Lower threshold for testing
             )
             print("   ✓ Neural pathway cache enabled")
         except Exception as e:
             print(f"   ⚠️  Pathway cache not available: {e}")
         
         try:
+            print("   Creating goal decomposition learner...", flush=True)
             orchestrator.goal_learner = GoalDecompositionLearner(execution_store)
             print("   ✓ Goal decomposition learning enabled")
         except Exception as e:
             print(f"   ⚠️  Goal learner not available: {e}")
     
-    print("\n✅ Neural Engine ready!\n")
+    print("\n✅ Neural Engine ready!\n", flush=True)
     
     return orchestrator

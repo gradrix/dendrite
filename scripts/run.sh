@@ -53,14 +53,47 @@ ensure_services() {
     done
     
     echo "✅ All services ready"
+    
+    # Run database migrations (idempotent - safe to run multiple times)
+    echo "🗄️  Running database migrations..."
+    if ./scripts/utils/migrate.sh > /dev/null 2>&1; then
+        echo "✅ Database migrations complete"
+    else
+        echo "⚠️  Migration warnings (may already be applied)"
+    fi
 }
 
 case "$COMMAND" in
     ask)
         # Single goal execution with full visibility
-        GOAL="$*"
+        GOAL=""
+        DEBUG_FLAG=""
+        
+        # Parse arguments (support --debug-llm flag)
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --debug-llm)
+                    DEBUG_FLAG="--debug-llm"
+                    shift
+                    ;;
+                *)
+                    GOAL="$GOAL $1"
+                    shift
+                    ;;
+            esac
+        done
+        
+        GOAL=$(echo "$GOAL" | xargs)  # Trim whitespace
+        
         if [ -z "$GOAL" ]; then
-            echo "Usage: ./scripts/run.sh ask \"Your goal here\""
+            echo "Usage: ./scripts/run.sh ask \"Your goal here\" [--debug-llm]"
+            echo ""
+            echo "Options:"
+            echo "  --debug-llm    Show all LLM calls with prompts and responses"
+            echo ""
+            echo "Examples:"
+            echo "  ./scripts/run.sh ask \"What is 2 plus 2?\""
+            echo "  ./scripts/run.sh ask \"What is 2 plus 2?\" --debug-llm"
             exit 1
         fi
         
@@ -68,10 +101,13 @@ case "$COMMAND" in
         
         echo ""
         echo "🎯 Executing goal with full thinking visibility"
+        if [ -n "$DEBUG_FLAG" ]; then
+            echo "🔍 LLM Debug Mode: ENABLED"
+        fi
         echo ""
         
         # Run with thinking visualizer
-        docker compose run --rm tests python /app/run_goal.py "$GOAL" --verbose
+        docker compose run --rm tests python /app/run_goal.py "$GOAL" --verbose $DEBUG_FLAG
         ;;
     
     demo)

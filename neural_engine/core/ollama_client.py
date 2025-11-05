@@ -1,13 +1,26 @@
 import ollama
 import os
+import logging
 from .exceptions import TokenLimitExceeded
 
 
 class OllamaClient:
-    def __init__(self):
+    def __init__(self, debug_mode: bool = None):
         host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         self.model = os.environ.get("OLLAMA_MODEL", "mistral")
         self.client = ollama.Client(host=host)
+        
+        # Debug mode can be set explicitly or via environment variable
+        if debug_mode is None:
+            debug_mode = os.environ.get("DEBUG_LLM", "false").lower() == "true"
+        self.debug_mode = debug_mode
+        
+        if self.debug_mode:
+            print("🔍 LLM Debug Mode: ENABLED")
+            print(f"   Model: {self.model}")
+            print(f"   Host: {host}")
+        
+        self._call_counter = 0
         
         # Model-specific token limits (can be overridden)
         self.token_limits = {
@@ -79,7 +92,22 @@ class OllamaClient:
                     context=context or "generate() call"
                 )
         
+        # Debug logging before call
+        if self.debug_mode:
+            self._call_counter += 1
+            self._log_llm_call(
+                call_type="generate",
+                context=context or "unknown",
+                prompt=prompt,
+                estimated_tokens=self._estimate_tokens(prompt) if check_tokens else None
+            )
+        
         response = self.client.generate(model=self.model, prompt=prompt)
+        
+        # Debug logging after call
+        if self.debug_mode:
+            self._log_llm_response(response)
+        
         return response
     
     def _estimate_tokens(self, text: str) -> int:
@@ -89,7 +117,7 @@ class OllamaClient:
         """
         return len(text) // 3  # Conservative: 3 chars/token
     
-    def chat(self, messages, options=None):
+    def chat(self, messages, options=None, context: str = None):
         """
         Chat API with message history support for few-shot learning.
         
@@ -97,6 +125,7 @@ class OllamaClient:
             messages: List of message dicts with 'role' and 'content'
                      Roles: 'system', 'user', 'assistant'
             options: Optional dict of generation options (temperature, etc.)
+            context: Optional context description for debugging
         
         Returns:
             Response dict with 'message' containing 'content'
@@ -109,9 +138,58 @@ class OllamaClient:
                 {"role": "user", "content": "How are you?"}  # Actual query
             ]
         """
+        # Debug logging before call
+        if self.debug_mode:
+            self._call_counter += 1
+            # For chat, show the user message
+            user_msg = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), "")
+            self._log_llm_call(
+                call_type="chat",
+                context=context or "unknown",
+                prompt=user_msg,
+                estimated_tokens=None
+            )
+        
         response = self.client.chat(
             model=self.model, 
             messages=messages,
             options=options or {}
         )
+        
+        # Debug logging after call
+        if self.debug_mode:
+            self._log_llm_response(response)
+        
         return response
+    
+    def _log_llm_call(self, call_type: str, context: str, prompt: str, estimated_tokens: int = None):
+        """Log LLM call details in debug mode."""
+        print(f"\n🔍 LLM Call #{self._call_counter} ({call_type})")
+        print(f"   Purpose: {context}")
+        
+        # Show prompt preview (first 150 chars)
+        prompt_preview = prompt[:150].replace('\n', ' ')
+        if len(prompt) > 150:
+            prompt_preview += "..."
+        print(f"   Prompt: {prompt_preview}")
+        
+        if estimated_tokens:
+            print(f"   Tokens: ~{estimated_tokens} / {self.token_limit}")
+    
+    def _log_llm_response(self, response: dict):
+        """Log LLM response details in debug mode."""
+        # Extract response text based on response type
+        if 'response' in response:
+            # generate() response
+            text = response['response']
+        elif 'message' in response and 'content' in response['message']:
+            # chat() response
+            text = response['message']['content']
+        else:
+            text = str(response)
+        
+        # Show response preview (first 150 chars)
+        response_preview = text[:150].replace('\n', ' ')
+        if len(text) > 150:
+            response_preview += "..."
+        print(f"   Response: {response_preview}\n")

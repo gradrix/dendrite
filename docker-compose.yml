@@ -109,6 +109,9 @@ services:
       POSTGRES_PASSWORD: dendrite_pass
     volumes:
       - .:/app
+      - huggingface_cache:/root/.cache/huggingface  # Cache SentenceTransformer models
+      - chroma_cache:/root/.cache/chroma  # Cache ChromaDB ONNX models
+      - chroma_data:/app/chroma_data  # Persist Chroma vector database
     command: pytest
     profiles:
       - cpu
@@ -134,6 +137,9 @@ services:
       POSTGRES_PASSWORD: dendrite_pass
     volumes:
       - .:/app
+      - huggingface_cache:/root/.cache/huggingface  # Cache SentenceTransformer models
+      - chroma_cache:/root/.cache/chroma  # Cache ChromaDB ONNX models
+      - chroma_data:/app/chroma_data  # Persist Chroma vector database
     command: pytest
     profiles:
       - gpu
@@ -143,3 +149,6 @@ volumes:
   postgres_data:
   ollama_data:
   kv_store:
+  huggingface_cache:  # Persist SentenceTransformer model downloads (90MB)
+  chroma_cache:  # Persist ChromaDB ONNX model downloads (79MB)
+  chroma_data:  # Persist Chroma vector database (neural pathways)

@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 import time
 from neural_engine.core.neuron import BaseNeuron
 from neural_engine.core.intent_classifier_neuron import IntentClassifierNeuron
@@ -8,6 +8,7 @@ from neural_engine.core.execution_store import ExecutionStore
 from neural_engine.core.tool_discovery import ToolDiscovery
 from neural_engine.core.tool_lifecycle_manager import ToolLifecycleManager
 from neural_engine.core.error_recovery_neuron import ErrorRecoveryNeuron
+from neural_engine.core.result_validator_neuron import ResultValidatorNeuron
 from neural_engine.core.ollama_client import OllamaClient
 
 class Orchestrator:
@@ -177,7 +178,87 @@ class Orchestrator:
         # Track execution timing
         start_time = time.time()
         
-        # Execute the pipeline
+        # PHASE 2.1: Check Neural Pathway Cache first (System 1 - Fast Path)
+        cached_pathway = None
+        if hasattr(self, 'pathway_cache') and self.pathway_cache:
+            try:
+                # Generate goal embedding for similarity search
+                goal_embedding = self._generate_goal_embedding(goal)
+                
+                # Try to find cached pathway
+                cached_pathway = self.pathway_cache.find_cached_pathway(
+                    goal_text=goal,
+                    goal_embedding=goal_embedding
+                )
+                
+                if cached_pathway:
+                    # Notify visualizer if available
+                    if hasattr(self, 'visualizer') and self.visualizer:
+                        self.visualizer.show_cache_check({
+                            'similarity': cached_pathway['similarity_score'],
+                            'confidence_score': cached_pathway['confidence_score'],
+                            'pathway_id': cached_pathway['pathway_id'],
+                            'tools_used': cached_pathway.get('tool_names', []),
+                            'usage_count': cached_pathway.get('usage_count', 0),
+                            'cache_type': 'pathway'
+                        })
+                    else:
+                        print(f"💨 Pathway cache hit! (similarity: {cached_pathway['similarity_score']:.0%}, confidence: {cached_pathway['confidence_score']:.0%})")
+                        print(f"   Using cached execution path (System 1)")
+                    
+                    # Execute from cache (fast path)
+                    result = cached_pathway.get('final_result', {})
+                    
+                    # Update usage statistics
+                    self.pathway_cache.update_pathway_result(
+                        pathway_id=cached_pathway['pathway_id'],
+                        success=True
+                    )
+                    
+                    # Calculate duration
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    
+                    # Log execution
+                    if self.execution_store:
+                        try:
+                            self._log_execution(goal_id, goal, result, duration_ms, depth, 
+                                              cache_hit=True, pathway_id=cached_pathway['pathway_id'])
+                        except Exception as e:
+                            print(f"Warning: Failed to log execution: {e}")
+                    
+                    return result
+                else:
+                    # Notify visualizer of cache miss
+                    if hasattr(self, 'visualizer') and self.visualizer:
+                        self.visualizer.show_cache_check(None)
+            except Exception as e:
+                print(f"⚠️  Pathway cache lookup failed: {e}")
+                cached_pathway = None
+        
+        # PHASE 2.2: Check for learned decomposition patterns (before execution)
+        suggested_pattern = None
+        if hasattr(self, 'goal_learner') and self.goal_learner:
+            try:
+                patterns = self.goal_learner.find_similar_patterns(
+                    goal_text=goal,
+                    similarity_threshold=0.75,  # 75% similarity
+                    only_successful=True,
+                    limit=1
+                )
+                
+                if patterns and len(patterns) > 0:
+                    suggested_pattern = patterns[0]
+                    
+                    # Notify visualizer if available
+                    if hasattr(self, 'visualizer') and self.visualizer:
+                        self.visualizer.show_pattern_suggestion(suggested_pattern)
+                    else:
+                        print(f"📚 Found similar goal pattern (similarity: {suggested_pattern['similarity']:.0%})")
+                        print(f"   Suggested decomposition: {suggested_pattern['subgoal_count']} subgoals")
+            except Exception as e:
+                print(f"⚠️  Pattern lookup failed: {e}")
+                suggested_pattern = None
+        
         result = self.execute(goal_id, goal, depth)
         
         # Calculate duration
@@ -189,6 +270,82 @@ class Orchestrator:
                 self._log_execution(goal_id, goal, result, duration_ms, depth)
             except Exception as e:
                 print(f"Warning: Failed to log execution: {e}")
+        
+        # PHASE 2.4: Validate result before caching (with proper validation)
+        if hasattr(self, 'pathway_cache') and self.pathway_cache:
+            try:
+                # Use result validator if available, otherwise fall back to simple check
+                if hasattr(self, 'result_validator') and self.result_validator:
+                    should_cache, confidence, reasoning = self.result_validator.should_cache_result(
+                        goal, result, duration_ms
+                    )
+                    
+                    if should_cache:
+                        goal_embedding = self._generate_goal_embedding(goal)
+                        pathway_id = self.pathway_cache.store_pathway(
+                            goal_text=goal,
+                            goal_embedding=goal_embedding,
+                            execution_steps=self._extract_execution_steps(goal_id),
+                            final_result=result,
+                            tool_names=self._extract_tools_used(goal_id),
+                            execution_time_ms=duration_ms
+                        )
+                        if pathway_id:
+                            print(f"💾 Pathway cached (confidence: {confidence:.0%}, ID: {pathway_id[:8]}...)")
+                            
+                        # PHASE 2.2: Store decomposition pattern after successful caching
+                        if hasattr(self, 'goal_learner') and self.goal_learner:
+                            try:
+                                tools_used = self._extract_tools_used(goal_id)
+                                subgoals = self._extract_subgoals(goal_id)  # Extract from execution steps
+                                
+                                pattern_id = self.goal_learner.store_pattern(
+                                    goal_text=goal,
+                                    subgoals=subgoals,
+                                    success=True,
+                                    execution_time_ms=duration_ms,
+                                    tools_used=tools_used,
+                                    goal_type=None  # Could classify later
+                                )
+                                print(f"📚 Stored decomposition pattern (ID: {pattern_id})")
+                            except Exception as e:
+                                print(f"⚠️  Failed to store pattern: {e}")
+                    else:
+                        print(f"⚠️  Result not cached - {reasoning}")
+                else:
+                    # Fallback to simple validation (legacy)
+                    execution_success = result.get('success', False) or not result.get('error')
+                    if execution_success:
+                        goal_embedding = self._generate_goal_embedding(goal)
+                        pathway_id = self.pathway_cache.store_pathway(
+                            goal_text=goal,
+                            goal_embedding=goal_embedding,
+                            execution_steps=self._extract_execution_steps(goal_id),
+                            final_result=result,
+                            tool_names=self._extract_tools_used(goal_id),
+                            execution_time_ms=duration_ms
+                        )
+                        if pathway_id:
+                            print(f"💾 Pathway cached for future use (ID: {pathway_id[:8]}...)")
+                            
+                        # PHASE 2.2: Store decomposition pattern after successful caching
+                        if hasattr(self, 'goal_learner') and self.goal_learner:
+                            try:
+                                tools_used = self._extract_tools_used(goal_id)
+                                subgoals = self._extract_subgoals(goal_id)
+                                
+                                pattern_id = self.goal_learner.store_pattern(
+                                    goal_text=goal,
+                                    subgoals=subgoals,
+                                    success=True,
+                                    execution_time_ms=duration_ms,
+                                    tools_used=tools_used
+                                )
+                                print(f"📚 Stored decomposition pattern (ID: {pattern_id})")
+                            except Exception as e:
+                                print(f"⚠️  Failed to store pattern: {e}")
+            except Exception as e:
+                print(f"⚠️  Failed to cache pathway: {e}")
         
         return result
 
@@ -278,16 +435,9 @@ class Orchestrator:
 
         return execution_result
     
-    def _log_execution(self, goal_id: str, goal_text: str, result: Dict, duration_ms: int, depth: int):
-        """Log execution to ExecutionStore.
-        
-        Args:
-            goal_id: The goal identifier
-            goal_text: Original user request
-            result: Pipeline result dictionary
-            duration_ms: Execution duration in milliseconds
-            depth: Recursion depth
-        """
+    def _log_execution(self, goal_id: str, goal_text: str, result: Dict, duration_ms: int, depth: int, 
+                       cache_hit: bool = False, pathway_id: Optional[str] = None):
+        """Log execution to PostgreSQL if available."""
         # Extract key information from result
         intent = result.get('intent', 'unknown')
         success = result.get('success', False)
@@ -409,3 +559,57 @@ class Orchestrator:
                 'error': str(e),
                 'status': 'failed'
             }
+    
+    def _generate_goal_embedding(self, goal: str) -> List[float]:
+        """Generate vector embedding for goal text."""
+        # Use the same embedding model as tool discovery (if available)
+        if hasattr(self, 'tool_discovery') and self.tool_discovery:
+            # Tool discovery has the embedding model
+            return self.tool_discovery.collection._embedding_function([goal])[0]
+        else:
+            # Fallback: use sentence-transformers directly
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer('all-MiniLM-L6-v2')
+            return model.encode(goal, convert_to_tensor=False).tolist()
+    
+    def _extract_execution_steps(self, goal_id: str) -> List[Dict[str, Any]]:
+        """Extract execution steps from message bus for this goal."""
+        # Get messages from message bus for this goal
+        steps = []
+        try:
+            if self.message_bus:
+                # Get all messages for this goal_id from message bus
+                # This is a simplified version - could be enhanced to parse actual steps
+                steps.append({
+                    "step": 1,
+                    "action": "full_pipeline",
+                    "goal_id": goal_id
+                })
+        except:
+            pass
+        return steps
+    
+    def _extract_tools_used(self, goal_id: str) -> List[str]:
+        """Extract list of tools used in this execution."""
+        tools = []
+        try:
+            # Extract from message bus or track during execution
+            # For now, return empty list - could be enhanced
+            pass
+        except:
+            pass
+        return tools
+    
+    def _extract_subgoals(self, goal_id: str) -> List[str]:
+        """Extract subgoals from execution (for decomposition learning)."""
+        subgoals = []
+        try:
+            # For simple tool-use goals, the subgoal is just the tool execution
+            # For complex goals with multiple steps, this would extract each step
+            # For now, return single subgoal representing the execution
+            subgoals.append("execute_tool")  # Placeholder
+        except:
+            pass
+        return subgoals
+
+

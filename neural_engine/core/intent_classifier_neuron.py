@@ -27,6 +27,7 @@ class IntentClassifierNeuron(BaseNeuron):
         self.use_parallel_voting = use_parallel_voting
         self.semantic_confidence_threshold = semantic_confidence_threshold
         self.cache_threshold = cache_threshold
+        self.visualizer = None  # Optional visualizer for cache hit tracking
         
         if self.use_simplifier:
             self.simplifier = TaskSimplifier()
@@ -99,6 +100,15 @@ class IntentClassifierNeuron(BaseNeuron):
                 intent = cached_decision["intent"]
                 print(f"✓ Pattern cache hit: '{goal}' → {intent} (confidence: {cache_confidence:.2f})")
                 
+                # Notify visualizer if available
+                if self.visualizer:
+                    self.visualizer.show_cache_check({
+                        'intent': intent,
+                        'confidence': cache_confidence,
+                        'similarity': cache_confidence,
+                        'cache_type': 'pattern'
+                    })
+                
                 self.add_message_with_metadata(
                     goal_id=goal_id,
                     message_type="intent",
@@ -112,6 +122,10 @@ class IntentClassifierNeuron(BaseNeuron):
                 )
                 
                 return {"goal": goal, "intent": intent}
+            else:
+                # Notify visualizer of cache miss
+                if self.visualizer:
+                    self.visualizer.show_cache_check(None)
         
         # Stage 2: Semantic classification (REVOLUTIONARY - keyword-enhanced!)
         if self.use_semantic and self.semantic_classifier:

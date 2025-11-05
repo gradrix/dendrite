@@ -37,7 +37,19 @@ class Sandbox:
 
         try:
             exec(code, environment)
-            result = {"success": True, "result": self._result, "error": None}
+            
+            # Phase 2.4b: Flatten double-nested result structure
+            # If tool returns {"result": "..."}, don't wrap it again
+            tool_result = self._result
+            if isinstance(tool_result, dict) and "result" in tool_result and len(tool_result) == 1:
+                # Tool already returned a result dict - use it directly
+                result = {"success": True, "result": tool_result["result"], "error": None}
+            elif isinstance(tool_result, dict) and "error" in tool_result:
+                # Tool returned an error dict
+                result = {"success": False, "result": None, "error": tool_result["error"]}
+            else:
+                # Tool returned something else - wrap it
+                result = {"success": True, "result": tool_result, "error": None}
         except Exception as e:
             # Phase 10d: Attempt error recovery if available
             if hasattr(self, 'error_recovery') and self.error_recovery and hasattr(self, 'error_recovery_context'):

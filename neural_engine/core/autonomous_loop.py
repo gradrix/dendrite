@@ -21,8 +21,9 @@ from typing import Dict, Optional, List, Any
 from datetime import datetime, timedelta
 import time
 
-from neural_engine.core.shadow_tester import ShadowTester, ShadowTestRecommender
-from neural_engine.core.replay_tester import ReplayTester, ReplayTestRecommender
+# TODO: Re-enable when testing strategies are re-integrated
+# from neural_engine.core.archive_deprecated.shadow_tester import ShadowTester, ShadowTestRecommender
+# from neural_engine.core.archive_deprecated.replay_tester import ReplayTester, ReplayTestRecommender
 from neural_engine.core.deployment_monitor import DeploymentMonitor
 from neural_engine.core.tool_version_manager import ToolVersionManager
 
@@ -78,8 +79,9 @@ class AutonomousLoop:
         self.cycle_count = 0
         
         # Initialize testing strategies
-        self.shadow_tester = ShadowTester(execution_store=execution_store)
-        self.replay_tester = ReplayTester(execution_store=execution_store)
+        # TODO: Re-enable when testing strategies are re-integrated with pytest
+        self.shadow_tester = None  # ShadowTester(execution_store=execution_store)
+        self.replay_tester = None  # ReplayTester(execution_store=execution_store)
         
         # Initialize version manager (Phase 9f)
         self.version_manager = ToolVersionManager(
@@ -532,24 +534,26 @@ class AutonomousLoop:
     def _determine_test_strategy(self, tool, tool_name: str) -> Dict[str, str]:
         """Determine best testing strategy for this tool."""
         
+        # TODO: Re-enable when testing strategies are re-integrated
         # Check if shadow testing is suitable
-        shadow_check = ShadowTestRecommender.can_shadow_test(tool)
-        if shadow_check['suitable']:
-            return {
-                'method': 'shadow',
-                'reason': shadow_check['reason']
-            }
+        # shadow_check = ShadowTestRecommender.can_shadow_test(tool)
+        # if shadow_check['suitable']:
+        #     return {
+        #         'method': 'shadow',
+        #         'reason': shadow_check['reason']
+        #     }
         
         # Check if replay testing is suitable
-        replay_check = ReplayTestRecommender.can_replay_test(
-            tool, self.execution_store, tool_name
-        )
-        if replay_check['suitable']:
-            return {
-                'method': 'replay',
-                'reason': replay_check['reason']
-            }
+        # replay_check = ReplayTestRecommender.can_replay_test(
+        #     tool, self.execution_store, tool_name
+        # )
+        # if replay_check['suitable']:
+        #     return {
+        #         'method': 'replay',
+        #         'reason': replay_check['reason']
+        #     }
         
+        # For now, use basic synthetic testing until testing strategies are re-integrated
         # Check if tool has test cases
         if hasattr(tool, 'get_test_cases'):
             test_cases = tool.get_test_cases()

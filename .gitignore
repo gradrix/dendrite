@@ -15,10 +15,7 @@ state/data_cache/*.json
 
 # Runtime data (prod/test isolated)
 dump.rdb
-var/prod/
-var/test/
-var/kv_store.json
-var/tool_votes/
+var/
 chroma_data/
 *.sqlite3
 chroma.sqlite3

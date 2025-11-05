@@ -57,13 +57,13 @@ class PatternCache:
         # Clean any invalid patterns from disk
         self.clean_invalid_patterns()
     
-    def lookup(self, query: str, threshold: float = 0.85) -> Tuple[Optional[Dict], float]:
+    def lookup(self, query: str, threshold: float = 0.75) -> Tuple[Optional[Dict], float]:
         """
         Find similar pattern in cache.
         
         Args:
             query: Text to find similar pattern for
-            threshold: Minimum similarity score (0.0-1.0)
+            threshold: Minimum similarity score (0.0-1.0). Default 0.75 for good balance.
         
         Returns:
             (decision_data, confidence) or (None, 0.0) if no match
