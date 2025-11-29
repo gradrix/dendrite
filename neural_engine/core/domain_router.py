@@ -98,11 +98,21 @@ CONFIDENCE: [0-100]"""
         """Minimal keyword-based fallback for domain detection (only when LLM unavailable)."""
         goal_lower = goal.lower()
         
-        # Only check for most obvious keywords
-        if any(kw in goal_lower for kw in ["remember", "my name", "what is my"]):
-            return "memory"
-        if "strava" in goal_lower:
+        # Check Strava first (most specific)
+        strava_keywords = ["strava", "activity", "activities", "run", "runs", "ride", "cycling", 
+                          "workout", "exercise", "kudos", "segment", "athlete", "recent runs",
+                          "recent activities"]
+        if any(kw in goal_lower for kw in strava_keywords):
             return "strava"
+        
+        # Only check for most obvious memory keywords (must be more specific)
+        # Avoid single words like "my" that appear in many contexts
+        memory_keywords = ["remember this", "my name is", "what is my name", 
+                          "what did i tell you", "do you remember", "store my", "save my name"]
+        if any(kw in goal_lower for kw in memory_keywords):
+            return "memory"
+        
+        # Calculator keywords
         if any(kw in goal_lower for kw in ["calculate", "+", "-", "*", "/"]):
             return "calculator"
         

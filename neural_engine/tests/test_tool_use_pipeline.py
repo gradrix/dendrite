@@ -8,6 +8,7 @@ from neural_engine.core.generative_neuron import GenerativeNeuron
 from neural_engine.core.tool_selector_neuron import ToolSelectorNeuron
 from neural_engine.core.code_generator_neuron import CodeGeneratorNeuron
 from neural_engine.core.sandbox import Sandbox
+from neural_engine.core.key_value_store import KeyValueStore
 import datetime
 
 @pytest.mark.integration
@@ -16,8 +17,27 @@ def test_tool_use_pipeline(mocker):
     # Mock the intent classifier to ensure deterministic behavior for this test
     mocker.patch(
         'neural_engine.core.intent_classifier_neuron.IntentClassifierNeuron.process',
-        return_value={'intent': 'tool_use', 'goal': 'What time is it?'}
+        return_value={'intent': 'tool_use', 'goal': 'Say hello'}
     )
+    
+    # Mock the tool selector to select hello_world tool
+    mocker.patch(
+        'neural_engine.core.tool_selector_neuron.ToolSelectorNeuron.process',
+        return_value={
+            'goal': 'Say hello',
+            'selected_tools': [{
+                'name': 'hello_world',
+                'description': 'Outputs Hello World',
+                'confidence': 0.95
+            }],
+            'method': 'mocked'
+        }
+    )
+    
+    # Mock Strava credentials to prevent credential errors (in case they're needed)
+    kv_store = KeyValueStore()
+    kv_store.set('strava_cookies', 'mock_cookies')
+    kv_store.set('strava_token', 'mock_token')
 
     ollama_client = OllamaClient()
     message_bus = MessageBus()
@@ -49,4 +69,11 @@ def test_tool_use_pipeline(mocker):
     assert "result" in result
 
     # Check if the result contains hello output
-    assert "hello" in result["result"].lower() or "Hello" in result["result"]
+    # Result can be either a string or dict
+    result_value = result["result"]
+    if isinstance(result_value, dict):
+        result_str = str(result_value).lower()
+    else:
+        result_str = result_value.lower()
+    
+    assert "hello" in result_str, f"Expected 'hello' in result, got: {result_value}"

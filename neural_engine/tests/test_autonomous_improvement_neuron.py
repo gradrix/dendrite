@@ -157,6 +157,9 @@ def execution_store():
     # Update statistics for all tools
     store.update_statistics()
     
+    # Give the database a moment to ensure statistics are visible
+    time.sleep(0.1)
+    
     yield store
     
     # Cleanup
@@ -355,6 +358,9 @@ class TestOpportunityDetection:
         )
         
         try:
+            # Small delay to allow statistics to propagate
+            time.sleep(0.1)
+            
             result = neuron.detect_improvement_opportunities()
             
             assert result['success'] is True

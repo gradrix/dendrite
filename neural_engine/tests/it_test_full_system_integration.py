@@ -32,6 +32,12 @@ import os
 import shutil
 from neural_engine.core.system_factory import create_neural_engine
 from neural_engine.core.tool_registry import ToolRegistry
+from neural_engine.core.ollama_client import OllamaClient
+from neural_engine.core.execution_store import ExecutionStore
+from neural_engine.core.error_recovery_neuron import ErrorRecoveryNeuron
+from neural_engine.core.tool_discovery import ToolDiscovery
+from neural_engine.core.orchestrator import Orchestrator
+from neural_engine.tools.test_transient_tool import TestTransientTool
 
 
 class TestFullSystemIntegrationWithValidation(unittest.TestCase):

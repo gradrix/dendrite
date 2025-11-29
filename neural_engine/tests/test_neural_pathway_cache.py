@@ -12,17 +12,27 @@ import json
 from neural_engine.core.neural_pathway_cache import NeuralPathwayCache
 
 
+def get_mock_cursor(mock_execution_store):
+    """Helper to get the mock cursor from execution store."""
+    mock_conn = mock_execution_store._get_connection.return_value
+    return mock_conn.cursor.return_value.__enter__.return_value
+
+
 @pytest.fixture
 def mock_execution_store():
     """Mock ExecutionStore with database connection."""
     store = Mock()
-    store.conn = Mock()
     
-    # Mock cursor context manager
-    cursor = MagicMock()
-    cursor.__enter__ = Mock(return_value=cursor)
-    cursor.__exit__ = Mock(return_value=False)
-    store.conn.cursor.return_value = cursor
+    # Mock connection object with cursor context manager
+    mock_conn = Mock()
+    mock_cursor = MagicMock()
+    mock_cursor.__enter__ = Mock(return_value=mock_cursor)
+    mock_cursor.__exit__ = Mock(return_value=False)
+    mock_conn.cursor.return_value = mock_cursor
+    
+    # Mock the _get_db_connection and _release_db_connection methods
+    store._get_connection.return_value = mock_conn
+    store._release_connection = Mock()
     
     return store
 
@@ -61,8 +71,9 @@ def test_store_pathway_success(pathway_cache, mock_execution_store, mock_chroma_
     """Test storing a successful execution pathway."""
     pathway_id = str(uuid4())
     
-    # Mock database insert
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    # Mock database insert - access cursor through _get_connection
+    mock_conn = mock_execution_store._get_connection.return_value
+    cursor = mock_conn.cursor.return_value.__enter__.return_value
     cursor.fetchone.return_value = (pathway_id,)
     
     goal_text = "Get my recent Strava activities"
@@ -109,7 +120,7 @@ def test_find_cached_pathway_hit(pathway_cache, mock_execution_store):
     }
     
     # Mock database query
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchall.return_value = [
         (
             pathway_id,
@@ -170,7 +181,7 @@ def test_find_cached_pathway_invalidated(pathway_cache, mock_execution_store):
     }
     
     # Mock database query - pathway is invalid
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchall.return_value = [
         (
             pathway_id,
@@ -204,7 +215,7 @@ def test_find_cached_pathway_missing_tools(pathway_cache, mock_execution_store):
     }
     
     # Mock database query - pathway uses tool that's now missing
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchall.return_value = [
         (
             pathway_id,
@@ -245,7 +256,7 @@ def test_find_cached_pathway_low_confidence(pathway_cache, mock_execution_store)
     }
     
     # Mock database query - good similarity but low confidence
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchall.return_value = [
         (
             pathway_id,
@@ -274,7 +285,7 @@ def test_update_pathway_result_success(pathway_cache, mock_execution_store):
     pathway_id = str(uuid4())
     
     # Mock database function call
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchone.return_value = (True,)  # Function returns True
     
     result = pathway_cache.update_pathway_result(
@@ -296,7 +307,7 @@ def test_update_pathway_result_failure(pathway_cache, mock_execution_store):
     pathway_id = str(uuid4())
     
     # Mock database function call
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchone.return_value = (True,)
     
     result = pathway_cache.update_pathway_result(
@@ -318,7 +329,7 @@ def test_invalidate_pathways_for_tool(pathway_cache, mock_execution_store):
     tool_name = "removed_tool"
     
     # Mock database function call
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchone.return_value = (3,)  # 3 pathways invalidated
     
     result = pathway_cache.invalidate_pathways_for_tool(
@@ -337,7 +348,7 @@ def test_invalidate_pathways_for_tool(pathway_cache, mock_execution_store):
 def test_get_cache_stats(pathway_cache, mock_execution_store):
     """Test getting cache statistics."""
     # Mock database queries
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchone.return_value = (
         10,  # total_pathways
         8,   # valid_pathways
@@ -365,7 +376,7 @@ def test_get_cache_stats(pathway_cache, mock_execution_store):
 def test_cleanup_old_pathways(pathway_cache, mock_execution_store):
     """Test cleaning up old invalidated pathways."""
     # Mock database function call
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchone.return_value = (5,)  # 5 pathways deleted
     
     result = pathway_cache.cleanup_old_pathways(days_old=90)
@@ -417,7 +428,7 @@ def test_store_pathway_with_all_parameters(pathway_cache, mock_execution_store):
     pathway_id = str(uuid4())
     
     # Mock database insert
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchone.return_value = (pathway_id,)
     
     result = pathway_cache.store_pathway(
@@ -451,7 +462,7 @@ def test_find_cached_pathway_with_goal_type_filter(pathway_cache, mock_execution
     }
     
     # Mock database query
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.fetchall.return_value = [
         (
             pathway_id, "Goal", json.dumps([{"step": 1}]),
@@ -486,7 +497,7 @@ def test_invalidate_pathway_directly(pathway_cache, mock_execution_store):
     assert result is True
     
     # Verify database update
-    cursor = mock_execution_store.conn.cursor.return_value.__enter__.return_value
+    cursor = get_mock_cursor(mock_execution_store)
     cursor.execute.assert_called_once()
     sql = cursor.execute.call_args[0][0]
     assert "UPDATE neural_pathways" in sql
