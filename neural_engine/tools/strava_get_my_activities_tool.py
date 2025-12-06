@@ -1,7 +1,7 @@
 from neural_engine.tools.base_tool import BaseTool
 from neural_engine.clients.strava_client import StravaClient
 from neural_engine.core.key_value_store import KeyValueStore
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 class StravaGetMyActivitiesTool(BaseTool):
     def get_tool_definition(self):
@@ -14,6 +14,16 @@ class StravaGetMyActivitiesTool(BaseTool):
                 {"name": "page", "type": "int", "required": False, "default": 1, "description": "Page number"},
                 {"name": "per_page", "type": "int", "required": False, "default": 30, "description": "Results per page (max 200)"}
             ]
+        }
+    
+    def get_semantic_metadata(self) -> Dict[str, Any]:
+        """Semantic metadata for intelligent discovery."""
+        return {
+            "domain": "fitness",
+            "concepts": ["running", "cycling", "exercise", "workout", "sports", "athletics", "training"],
+            "actions": ["retrieve", "list", "fetch", "get", "show"],
+            "data_sources": ["strava_api", "fitness_tracker"],
+            "synonyms": ["runs", "rides", "workouts", "exercises", "activities", "training sessions"]
         }
 
     def execute(

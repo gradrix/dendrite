@@ -15,8 +15,11 @@ This is more effective than having a small model try to do everything.
 """
 
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
 from neural_engine.core.ollama_client import OllamaClient
+
+if TYPE_CHECKING:
+    from neural_engine.core.tool_discovery import ToolDiscovery
 
 
 class OverseerNeuron:
@@ -24,11 +27,13 @@ class OverseerNeuron:
     Overseer LLM that makes high-level decisions and decomposes tasks.
     
     Can use a different (larger) model than worker neurons for better reasoning.
+    Uses semantic tool discovery for intelligent fallback classification.
     """
     
     def __init__(self, 
                  ollama_client: OllamaClient,
-                 overseer_model: Optional[str] = None):
+                 overseer_model: Optional[str] = None,
+                 tool_discovery: Optional['ToolDiscovery'] = None):
         """
         Initialize Overseer Neuron.
         
@@ -36,12 +41,18 @@ class OverseerNeuron:
             ollama_client: Client for LLM communication
             overseer_model: Optional specific model for overseer (e.g., "mistral", "llama2:13b")
                           If None, uses same model as workers
+            tool_discovery: Optional ToolDiscovery for semantic classification
         """
         self.ollama_client = ollama_client
         self.overseer_model = overseer_model
+        self.tool_discovery = tool_discovery
         
         # Track overseer decisions for analysis
         self.decision_history = []
+    
+    def set_tool_discovery(self, tool_discovery: 'ToolDiscovery'):
+        """Set tool discovery after initialization."""
+        self.tool_discovery = tool_discovery
     
     def classify_intent(self, goal: str) -> Dict:
         """
@@ -126,62 +137,55 @@ Respond in JSON:
     
     def _fallback_classification(self, goal: str) -> Dict:
         """
-        Heuristic-based classification when LLM fails.
+        Semantic-based fallback classification when LLM fails.
+        
+        Uses tool discovery to determine if any tools match the goal semantically.
+        If yes → tool_use. If no → generative.
+        
+        NO MORE HARDCODED KEYWORDS!
         """
-        goal_lower = goal.lower()
+        # Try semantic tool discovery first
+        if self.tool_discovery:
+            candidates = self.tool_discovery.semantic_search(goal, n_results=3)
+            
+            if candidates:
+                top_match = candidates[0]
+                distance = top_match.get('distance', 1.0)
+                
+                # Good semantic match → tool_use
+                if distance < 0.7:
+                    return {
+                        "intent": "tool_use",
+                        "confidence": max(0.6, 1.0 - distance),
+                        "reasoning": f"Semantically matches {top_match['tool_name']} (distance: {distance:.2f})",
+                        "suggested_approach": f"Use {top_match['tool_name']} tool",
+                        "matched_tools": [c['tool_name'] for c in candidates[:3]],
+                        "goal": goal,
+                        "overseer_model": "semantic_fallback"
+                    }
+                
+                # Weak match → still might be tool_use for certain domains
+                domain = top_match.get('domain', 'general')
+                if domain in ['memory', 'fitness', 'math'] and distance < 1.0:
+                    return {
+                        "intent": "tool_use",
+                        "confidence": 0.6,
+                        "reasoning": f"Domain '{domain}' detected with weak match",
+                        "suggested_approach": f"Try {top_match['tool_name']} tool",
+                        "matched_tools": [c['tool_name'] for c in candidates[:3]],
+                        "goal": goal,
+                        "overseer_model": "semantic_fallback"
+                    }
         
-        # Tool use keyword patterns
-        tool_patterns = [
-            (["store", "save", "remember", "write", "record"], ("tool_use", 0.8, "storage action detected")),
-            (["recall", "retrieve", "what did i", "tell me about"], ("tool_use", 0.8, "retrieval action detected")),
-            (["time", "date", "weather", "current"], ("tool_use", 0.9, "real-time data needed")),
-            (["calculate", "compute", "add", "sum"], ("tool_use", 0.7, "computation needed")),
-            (["activity", "activities", "strava"], ("tool_use", 0.8, "external service query")),
-        ]
-        
-        # Generative keyword patterns
-        generative_patterns = [
-            (["hello", "hi", "greet"], ("generative", 0.9, "simple greeting")),
-            (["joke", "story", "poem"], ("generative", 0.9, "creative request")),
-            (["explain", "what is", "how does"], ("generative", 0.7, "knowledge query")),
-            (["tell me", "say"], ("generative", 0.6, "conversational")),
-        ]
-        
-        # Check tool patterns first (higher priority)
-        for keywords, (intent, conf, reason) in tool_patterns:
-            if any(kw in goal_lower for kw in keywords):
-                return {
-                    "intent": intent,
-                    "confidence": conf,
-                    "reasoning": reason,
-                    "suggested_approach": "Use appropriate tool",
-                    "keywords_detected": keywords,
-                    "goal": goal,
-                    "overseer_model": "heuristic_fallback"
-                }
-        
-        # Check generative patterns
-        for keywords, (intent, conf, reason) in generative_patterns:
-            if any(kw in goal_lower for kw in keywords):
-                return {
-                    "intent": intent,
-                    "confidence": conf,
-                    "reasoning": reason,
-                    "suggested_approach": "Generate direct response",
-                    "keywords_detected": keywords,
-                    "goal": goal,
-                    "overseer_model": "heuristic_fallback"
-                }
-        
-        # Default to generative with low confidence
+        # No tool discovery or no matches - default to generative
         return {
             "intent": "generative",
             "confidence": 0.5,
-            "reasoning": "No clear indicators, defaulting to generative",
-            "suggested_approach": "Attempt direct response",
-            "keywords_detected": [],
+            "reasoning": "No semantic tool matches, defaulting to generative",
+            "suggested_approach": "Generate direct response",
+            "matched_tools": [],
             "goal": goal,
-            "overseer_model": "heuristic_fallback"
+            "overseer_model": "semantic_fallback"
         }
     
     def decompose_goal(self, goal: str) -> Dict:

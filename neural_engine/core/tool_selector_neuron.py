@@ -40,8 +40,9 @@ class ToolSelectorNeuron(BaseNeuron):
             self.voting_selector = None
         
         # Initialize domain router and specialists
+        # Pass tool_discovery for semantic domain detection (no more keyword hacking!)
         if self.use_specialists:
-            self.domain_router = DomainRouter(ollama_client)
+            self.domain_router = DomainRouter(ollama_client, tool_discovery=tool_discovery)
             self.memory_specialist = MemoryOperationsSpecialist(message_bus, ollama_client)
         else:
             self.domain_router = None

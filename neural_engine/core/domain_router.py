@@ -4,36 +4,47 @@ Domain Router - Routes requests to specialized LLM instances.
 This improves accuracy by using domain-specific experts instead of
 one general-purpose LLM trying to handle everything.
 
-Uses micro-LLM approach: small focused LLM call for domain detection.
-No regex patterns - generalizable and maintainable.
+Uses semantic tool discovery to determine domain - no hardcoded keywords!
+The domain is inferred from which tools match the goal semantically.
 """
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from neural_engine.core.tool_discovery import ToolDiscovery
 
 
 class DomainRouter:
     """
     Routes user goals to specialized domain handlers.
     
-    Domains:
-    - memory: Memory read/write operations
-    - strava: Strava API operations
-    - calculator: Mathematical calculations
-    - general: Everything else (default)
+    Domains are INFERRED from tool metadata, not hardcoded:
+    - If top matching tools have domain="fitness" → route to strava specialist
+    - If top matching tools have domain="memory" → route to memory specialist  
+    - Otherwise → general
     
-    Uses small LLM call for robust, generalizable domain detection.
+    This is the semantic, generalizable approach!
     """
     
-    def __init__(self, ollama_client=None):
-        """Initialize domain router with optional LLM client."""
+    def __init__(self, ollama_client=None, tool_discovery: Optional['ToolDiscovery'] = None):
+        """Initialize domain router with optional LLM client and tool discovery."""
         self.ollama_client = ollama_client
+        self.tool_discovery = tool_discovery
     
     def detect_domain(self, goal: str) -> str:
         """
-        Detect the domain for a given goal using per-domain voting.
+        Detect the domain for a given goal using semantic tool matching.
         
-        Each domain gets asked: "Does this goal belong to YOUR domain?"
-        Highest confidence wins.
+        NEW approach:
+        1. Use tool_discovery to find semantically matching tools
+        2. Look at the domain metadata of top matches
+        3. Route to the dominant domain
+        
+        This means "show me my runs from last week" will:
+        - Match strava_get_my_activities (domain="fitness")
+        - Route to strava domain
+        
+        Without any hardcoded keywords!
         
         Args:
             goal: User goal text
@@ -41,14 +52,60 @@ class DomainRouter:
         Returns:
             Domain name ("memory", "strava", "calculator", "general")
         """
-        # If no LLM client, use fast keyword fallback
-        if not self.ollama_client:
-            return self._keyword_fallback(goal)
+        # Try semantic tool discovery first (the smart way!)
+        if self.tool_discovery:
+            domain = self._detect_via_tool_discovery(goal)
+            if domain != "general":
+                return domain
         
-        # Vote each domain
+        # Fallback to LLM voting if tool discovery didn't give clear result
+        if self.ollama_client:
+            return self._detect_via_llm_voting(goal)
+        
+        # Last resort: keyword fallback
+        return self._keyword_fallback(goal)
+    
+    def _detect_via_tool_discovery(self, goal: str) -> str:
+        """
+        Detect domain by looking at which tools match semantically.
+        
+        This is the CORE innovation - no keywords needed!
+        """
+        # Get top 5 semantically matching tools
+        candidates = self.tool_discovery.semantic_search(goal, n_results=5)
+        
+        if not candidates:
+            return "general"
+        
+        # Count domains from tool metadata
+        domain_scores = {}
+        for i, candidate in enumerate(candidates):
+            # Weight by position (first match matters more)
+            weight = 1.0 / (i + 1)
+            
+            # Get domain from metadata (stored during indexing)
+            domain = candidate.get('domain', 'general')
+            
+            # Map fitness domain to strava (for specialist routing)
+            if domain == 'fitness':
+                domain = 'strava'
+            
+            domain_scores[domain] = domain_scores.get(domain, 0) + weight
+        
+        # Return highest scoring domain
+        if domain_scores:
+            best_domain = max(domain_scores, key=domain_scores.get)
+            # Only return if it has significant score
+            if domain_scores[best_domain] > 0.5:
+                return best_domain
+        
+        return "general"
+    
+    def _detect_via_llm_voting(self, goal: str) -> str:
+        """Fallback: Use LLM to vote on domain."""
         domains = [
-            ("memory", "personal user information stored previously: remembering user's name, preferences, past conversations, things the user told you to remember"),
-            ("strava", "fitness activities, running, cycling, workouts, exercise data from Strava"),
+            ("memory", "retrieving or storing PERSONAL INFORMATION that the user previously told you (their name, preferences, favorites). NOT for external data like fitness activities or API data."),
+            ("strava", "fitness activities, running data, cycling, workouts, exercise tracking from Strava API - including 'runs', 'rides', 'activities', recent fitness data"),
             ("calculator", "mathematical calculations, numbers, arithmetic operations"),
         ]
         
@@ -60,6 +117,11 @@ class DomainRouter:
 
 Does this goal belong to the {domain_name} domain?
 ({domain_desc})
+
+IMPORTANT:
+- "memory" is ONLY for recalling things the USER TOLD YOU (like their name, preferences)
+- "strava" is for fitness data like runs, rides, activities (even if it says "my runs")
+- If the goal asks about exercise/fitness activities, answer NO for memory, YES for strava
 
 Answer YES or NO with confidence 0-100:
 YES if goal clearly matches this domain

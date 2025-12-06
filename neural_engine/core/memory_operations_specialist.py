@@ -3,10 +3,15 @@ Memory Operations Specialist - Expert in memory read/write distinction.
 
 This specialized classifier focuses ONLY on memory operations,
 achieving higher accuracy than the general classifier.
+
+Uses tool semantic metadata for action hints when available.
 """
 
-from typing import Dict
+from typing import Dict, Optional, TYPE_CHECKING
 from .neuron import BaseNeuron
+
+if TYPE_CHECKING:
+    from neural_engine.core.tool_discovery import ToolDiscovery
 
 
 class MemoryOperationsSpecialist(BaseNeuron):
@@ -16,14 +21,54 @@ class MemoryOperationsSpecialist(BaseNeuron):
     Distinguishes between:
     - memory_write: Storing information
     - memory_read: Retrieving information
+    
+    Uses semantic metadata from tools when available.
     """
     
-    def __init__(self, message_bus, ollama_client):
+    def __init__(self, message_bus, ollama_client, tool_discovery: Optional['ToolDiscovery'] = None):
         super().__init__(message_bus, ollama_client)
+        self.tool_discovery = tool_discovery
+        
+        # Cache tool action hints (populated from semantic metadata)
+        self._write_actions = {"store", "save", "write", "remember", "memorize", "note"}
+        self._read_actions = {"retrieve", "recall", "get", "read", "fetch"}
+    
+    def set_tool_discovery(self, tool_discovery: 'ToolDiscovery'):
+        """Set tool discovery and update action hints from metadata."""
+        self.tool_discovery = tool_discovery
+        self._update_action_hints()
+    
+    def _update_action_hints(self):
+        """Update action hints from tool semantic metadata."""
+        if not self.tool_discovery:
+            return
+        
+        # Get memory tools and extract their action metadata
+        try:
+            tools = self.tool_discovery.tool_registry.get_all_tools()
+            
+            for tool_name, tool_instance in tools.items():
+                if hasattr(tool_instance, 'get_semantic_metadata'):
+                    metadata = tool_instance.get_semantic_metadata()
+                    if metadata.get('domain') == 'memory':
+                        actions = set(metadata.get('actions', []))
+                        synonyms = set(metadata.get('synonyms', []))
+                        
+                        # memory_write actions
+                        if 'store' in actions or 'save' in actions or 'write' in actions:
+                            self._write_actions.update(actions)
+                            self._write_actions.update(synonyms)
+                        
+                        # memory_read actions  
+                        if 'retrieve' in actions or 'read' in actions or 'get' in actions:
+                            self._read_actions.update(actions)
+                            self._read_actions.update(synonyms)
+        except Exception:
+            pass  # Keep defaults if tool discovery fails
     
     def classify_memory_operation(self, goal: str) -> str:
         """
-        Classify memory operation type.
+        Classify memory operation type using LLM with semantic-aware fallback.
         
         Args:
             goal: User goal text
@@ -43,19 +88,6 @@ class MemoryOperationsSpecialist(BaseNeuron):
                     "- Questions (What? Tell me? Recall?) → read\n"
                     "- Commands to store (Remember that X, Save Y) → write\n"
                     "- Past tense recall (what I told you, what you know) → read\n\n"
-                    "Examples:\n"
-                    "User: Remember that my name is Alice\n"
-                    "Assistant: write\n\n"
-                    "User: What is my name?\n"
-                    "Assistant: read\n\n"
-                    "User: Remember what I told you about my favorite color\n"
-                    "Assistant: read\n\n"
-                    "User: Store the value 42 for key 'answer'\n"
-                    "Assistant: write\n\n"
-                    "User: Recall what I told you about my birthday\n"
-                    "Assistant: read\n\n"
-                    "User: What did I tell you?\n"
-                    "Assistant: read\n\n"
                     "Respond with ONLY 'write' or 'read'."
                 )
             },
@@ -65,44 +97,40 @@ class MemoryOperationsSpecialist(BaseNeuron):
         response = self.ollama_client.chat(messages)
         operation = response['message']['content'].strip().lower()
         
-        # Fallback: analyze keywords FIRST before trusting LLM response
+        # Semantic-aware fallback using action hints from tool metadata
         goal_lower = goal.lower()
         
-        # Strongest WRITE signals - statements of fact with "my X is Y" pattern
-        if any(p in goal_lower for p in ["my name is", "my favorite", "i am", "i'm from", "i like", "i live", "actually"]):
-            # Check if it's a question (would be read)
-            if not any(q in goal_lower for q in ["what", "who", "when", "where", "why", "how", "tell me", "?", "recall"]):
-                return "write"
+        # Check if goal contains write actions (from semantic metadata)
+        write_action_score = sum(1 for action in self._write_actions if action in goal_lower)
+        read_action_score = sum(1 for action in self._read_actions if action in goal_lower)
         
-        # Strongest READ signals - past tense recall patterns
-        if any(p in goal_lower for p in ["what i told", "what i said", "what you know", "told you about", "said earlier", "remember what"]):
-            return "read"
+        # Linguistic patterns for read/write detection (grammatical, not domain-specific)
+        # These are OK because they detect SENTENCE STRUCTURE, not topic
+        is_statement = any(p in goal_lower for p in ["my name is", "my favorite is", "i am ", "i like "])
+        is_question = "?" in goal or any(q in goal_lower for q in ["what is", "who is", "tell me"])
+        is_recall = any(p in goal_lower for p in ["what i told", "what you know", "do you remember"])
         
-        # Question words strongly indicate read
-        if any(q in goal_lower for q in ["what is", "who is", "when did", "where is", "why did", "how did", "tell me", "show me", "recall"]):
-            return "read"
-        
-        # Validate and clean LLM response
-        if "write" in operation or "stor" in operation or "save" in operation:
+        # Combine signals
+        if is_statement and not is_question and not is_recall:
             return "write"
-        elif "read" in operation or "recall" in operation or "get" in operation:
+        
+        if is_question or is_recall:
             return "read"
-        else:
-            # Final fallback: check for explicit write commands
-            write_patterns = ["remember that", "store", "save", "write", "note that", "set"]
-            read_patterns = ["recall", "retrieve", "get", "fetch"]
-            
-            # Check for explicit write patterns with "that" clause
-            for pattern in write_patterns:
-                if pattern in goal_lower and "that" in goal_lower:
-                    return "write"
-            
-            # Check for read patterns
-            if any(p in goal_lower for p in read_patterns):
-                return "read"
-            
-            # Default to read if uncertain (safer - read has no side effects)
+        
+        # Use action scores from semantic metadata
+        if write_action_score > read_action_score:
+            return "write"
+        elif read_action_score > write_action_score:
             return "read"
+        
+        # Trust LLM response as final fallback
+        if "write" in operation or "stor" in operation:
+            return "write"
+        elif "read" in operation or "recall" in operation:
+            return "read"
+        
+        # Default to read (safer - no side effects)
+        return "read"
     
     def select_memory_tool(self, goal: str) -> Dict:
         """

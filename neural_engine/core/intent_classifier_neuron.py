@@ -339,9 +339,11 @@ class IntentClassifierNeuron(BaseNeuron):
                 "role": "system",
                 "content": (
                     "You are an intent classifier. Classify user goals as either:\n"
-                    "- 'generative' (creative writing, stories, poems, general knowledge)\n"
-                    "- 'tool_use' (calculations, data retrieval, API calls, specific actions)\n\n"
-                    "Respond with only the intent name."
+                    "- 'generative' (creative writing, stories, poems, general knowledge questions, explanations, opinions, conversation)\n"
+                    "- 'tool_use' (calculations, storing/recalling personal data, API calls, running code, specific actions with measurable results)\n\n"
+                    "Important: Questions like 'What is X?' or 'Tell me about Y' are GENERATIVE - they need knowledge, not tools.\n"
+                    "Only use tool_use for things that require executing code or calling an API.\n\n"
+                    "Respond with ONLY the intent name, nothing else."
                 )
             },
             {"role": "user", "content": goal}

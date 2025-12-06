@@ -1,5 +1,5 @@
 from neural_engine.tools.base_tool import BaseTool
-from typing import Optional
+from typing import Optional, Dict, Any
 
 class AddNumbersTool(BaseTool):
     """
@@ -14,6 +14,16 @@ class AddNumbersTool(BaseTool):
                 {"name": "num1", "type": "float", "description": "First number to add", "required": True},
                 {"name": "num2", "type": "float", "description": "Second number to add", "required": True}
             ]
+        }
+    
+    def get_semantic_metadata(self) -> Dict[str, Any]:
+        """Semantic metadata for intelligent discovery."""
+        return {
+            "domain": "math",
+            "concepts": ["arithmetic", "addition", "numbers", "calculation", "sum"],
+            "actions": ["add", "calculate", "compute", "sum"],
+            "data_sources": ["user_input"],
+            "synonyms": ["plus", "add up", "total", "combine"]
         }
 
     def execute(self, **kwargs):

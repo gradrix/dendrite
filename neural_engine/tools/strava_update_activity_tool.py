@@ -1,7 +1,7 @@
 from neural_engine.tools.base_tool import BaseTool
 from neural_engine.clients.strava_client import StravaClient
 from neural_engine.core.key_value_store import KeyValueStore
-from typing import Optional
+from typing import Optional, Dict, Any
 
 class StravaUpdateActivityTool(BaseTool):
     def get_tool_definition(self):
@@ -16,6 +16,16 @@ class StravaUpdateActivityTool(BaseTool):
                 {"name": "map_visibility", "type": "string", "required": False, "description": "Map visibility: 'everyone', 'followers_only', or 'only_me'"},
                 {"name": "selected_polyline_style", "type": "string", "required": False, "description": "Map style: 'standard', 'satellite', 'fatmap_satellite_3d' (for 3D map)"}
             ]
+        }
+    
+    def get_semantic_metadata(self) -> Dict[str, Any]:
+        """Semantic metadata for intelligent discovery."""
+        return {
+            "domain": "fitness",
+            "concepts": ["activity", "update", "edit", "modify", "settings", "fitness"],
+            "actions": ["update", "edit", "modify", "change", "rename"],
+            "data_sources": ["strava_api"],
+            "synonyms": ["rename activity", "change description", "edit workout", "update settings"]
         }
 
     def execute(

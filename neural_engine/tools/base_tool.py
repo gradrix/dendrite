@@ -36,6 +36,32 @@ class BaseTool(ABC):
         """
         pass
     
+    def get_semantic_metadata(self) -> Dict[str, Any]:
+        """
+        Return semantic metadata for intelligent tool discovery.
+        
+        This enables the LLM to REASON about tool capabilities without
+        hardcoded keywords. Override this to describe what your tool does
+        at a conceptual level.
+        
+        Returns:
+            dict: {
+                "domain": str,  # High-level domain: "fitness", "memory", "math", "communication"
+                "concepts": List[str],  # Concepts this tool handles: ["running", "exercise", "personal data"]
+                "actions": List[str],  # What it does: ["retrieve", "store", "calculate", "send"]
+                "data_sources": List[str],  # Where data comes from: ["strava_api", "local_memory", "user_input"]
+                "synonyms": List[str],  # Alternative ways to describe: ["workouts", "exercises", "activities"]
+            }
+        """
+        # Default: extract from description (can be overridden for richer metadata)
+        return {
+            "domain": "general",
+            "concepts": [],
+            "actions": [],
+            "data_sources": [],
+            "synonyms": []
+        }
+    
     def get_tool_characteristics(self) -> Dict[str, Any]:
         """
         Declare tool characteristics for safe testing.

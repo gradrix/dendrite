@@ -1,4 +1,5 @@
 from .base_tool import BaseTool
+from typing import Dict, Any
 
 class HelloWorldTool(BaseTool):
     def get_tool_definition(self):
@@ -6,6 +7,16 @@ class HelloWorldTool(BaseTool):
             "name": "hello_world",
             "description": "Outputs or says 'Hello, World!' greeting message. Use when user asks to say hello, print hello, or display hello world.",
             "parameters": []
+        }
+    
+    def get_semantic_metadata(self) -> Dict[str, Any]:
+        """Semantic metadata for intelligent discovery."""
+        return {
+            "domain": "greeting",
+            "concepts": ["greeting", "hello", "welcome", "introduction"],
+            "actions": ["greet", "say", "output", "display"],
+            "data_sources": [],
+            "synonyms": ["hi", "hey", "hello world", "say hi"]
         }
 
     def execute(self, **kwargs):

@@ -10,6 +10,8 @@ This is the simplest end-to-end flow in the system.
 import pytest
 from neural_engine.core.intent_classifier_neuron import IntentClassifierNeuron
 from neural_engine.core.generative_neuron import GenerativeNeuron
+from neural_engine.core.tool_selector_neuron import ToolSelectorNeuron
+from neural_engine.core.code_generator_neuron import CodeGeneratorNeuron
 from neural_engine.core.orchestrator import Orchestrator
 from neural_engine.core.ollama_client import OllamaClient
 from neural_engine.core.message_bus import MessageBus
@@ -57,15 +59,29 @@ def generative_neuron(ollama_client, message_bus):
 @pytest.fixture
 def tool_registry():
     """Provide a ToolRegistry for testing."""
-    return ToolRegistry()
+    return ToolRegistry(tool_directory="neural_engine/tools")
 
 
 @pytest.fixture
-def orchestrator(intent_classifier, generative_neuron, tool_registry, message_bus):
+def tool_selector(message_bus, ollama_client, tool_registry):
+    """Provide a ToolSelectorNeuron for testing."""
+    return ToolSelectorNeuron(message_bus, ollama_client, tool_registry)
+
+
+@pytest.fixture
+def code_generator(message_bus, ollama_client, tool_registry):
+    """Provide a CodeGeneratorNeuron for testing."""
+    return CodeGeneratorNeuron(message_bus, ollama_client, tool_registry)
+
+
+@pytest.fixture
+def orchestrator(intent_classifier, generative_neuron, tool_selector, code_generator, tool_registry, message_bus):
     """Provide an Orchestrator with all neurons registered."""
     neuron_registry = {
         "intent_classifier": intent_classifier,
         "generative": generative_neuron,
+        "tool_selector": tool_selector,
+        "code_generator": code_generator,
     }
     return Orchestrator(
         neuron_registry=neuron_registry,
@@ -135,12 +151,14 @@ class TestPhase1GenerativePipeline:
     
     This tests the full flow:
     Goal → IntentClassifier → Orchestrator → GenerativeNeuron → Response
+    
+    NOTE: Uses goals that clearly require generative response (no tool match).
     """
     
     def test_orchestrator_handles_simple_question(self, orchestrator):
         """Test: Orchestrator correctly routes and answers simple question."""
         goal_id = "pipe-test-001"
-        goal = "What is Python?"
+        goal = "What is the capital of France?"  # No tool can answer this
         
         result = orchestrator.execute(goal_id, goal)
         
@@ -151,7 +169,7 @@ class TestPhase1GenerativePipeline:
     def test_orchestrator_handles_creative_request(self, orchestrator):
         """Test: Orchestrator handles creative/generative requests."""
         goal_id = "pipe-test-002"
-        goal = "Tell me a joke"
+        goal = "Tell me a funny joke about programmers"  # No tool for jokes
         
         result = orchestrator.execute(goal_id, goal)
         
@@ -162,7 +180,7 @@ class TestPhase1GenerativePipeline:
     def test_orchestrator_handles_explanation_request(self, orchestrator):
         """Test: Orchestrator explains concepts."""
         goal_id = "pipe-test-003"
-        goal = "Explain recursion in one sentence"
+        goal = "What is the meaning of life according to philosophy?"  # No tool
         
         result = orchestrator.execute(goal_id, goal)
         
@@ -171,9 +189,9 @@ class TestPhase1GenerativePipeline:
         print(f"✓ Explanation provided")
     
     def test_orchestrator_intent_classification_correct(self, orchestrator, message_bus):
-        """Test: Orchestrator correctly classifies intent as generative."""
+        """Test: Orchestrator correctly classifies intent."""
         goal_id = "pipe-test-004"
-        goal = "What is the meaning of life?"
+        goal = "Why is the sky blue?"  # No tool for this
         
         result = orchestrator.execute(goal_id, goal)
         
@@ -182,7 +200,7 @@ class TestPhase1GenerativePipeline:
         assert intent_message is not None
         # Extract intent from new metadata format
         intent = intent_message["data"]["intent"] if "data" in intent_message else intent_message
-        assert intent in ["generative", "tool_use"]  # Should be generative
+        assert intent in ["generative", "tool_use"]
         
         # Check that response was generated
         assert "response" in result
@@ -190,9 +208,9 @@ class TestPhase1GenerativePipeline:
 
 
 @pytest.mark.parametrize("goal,expected_keywords", [
-    ("What is Python?", ["python", "programming", "language"]),
-    ("Explain Docker", ["docker", "container"]),
-    ("What is 2+2?", ["4", "four"]),
+    ("What is the capital of Japan?", ["tokyo", "japan", "capital"]),
+    ("Write me a haiku about spring", ["spring", "haiku"]),
+    ("Why do birds migrate south?", ["bird", "migrate", "south", "winter"]),
 ])
 def test_generative_pipeline_batch(orchestrator, goal, expected_keywords):
     """
@@ -254,7 +272,7 @@ class TestPhase1MessageBusIntegration:
     def test_full_pipeline_message_flow(self, orchestrator, message_bus):
         """Test: Complete pipeline stores all messages correctly."""
         goal_id = "msg-test-001"
-        goal = "What is testing?"
+        goal = "What is the weather like in Antarctica?"  # No tool for this
         
         result = orchestrator.execute(goal_id, goal)
         

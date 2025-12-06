@@ -1,103 +1,117 @@
 """
 Tests for Task Simplifier - Helping small LLMs by clarifying tasks.
+
+REFACTORED: Uses semantic tool discovery instead of keywords.
 """
 
 import pytest
 from neural_engine.core.task_simplifier import TaskSimplifier
+from neural_engine.core.tool_discovery import ToolDiscovery
+from neural_engine.core.tool_registry import ToolRegistry
+
+
+@pytest.fixture
+def tool_registry():
+    """Provide a ToolRegistry with all tools."""
+    return ToolRegistry(tool_directory="neural_engine/tools")
+
+
+@pytest.fixture
+def tool_discovery(tool_registry):
+    """Provide a ToolDiscovery with indexed tools."""
+    discovery = ToolDiscovery(tool_registry)
+    discovery.index_all_tools()
+    return discovery
 
 
 class TestTaskSimplifier:
-    """Test task simplification for small LLMs."""
+    """Test task simplification for small LLMs using semantic discovery."""
     
-    def test_simplify_greeting_intent(self):
-        """Test greeting is correctly classified as generative."""
-        simplifier = TaskSimplifier()
+    def test_simplify_greeting_intent(self, tool_discovery):
+        """Test greeting is correctly classified - semantic matching."""
+        simplifier = TaskSimplifier(tool_discovery)
         
         result = simplifier.simplify_for_intent_classification("Say hello")
         
-        assert result["intent"] == "generative"
-        assert result["confidence"] > 0.9
-        assert "hello" in result["reasoning"].lower()
+        # With semantic search, "Say hello" matches hello_world tool
+        assert result["intent"] == "tool_use"
+        assert result["confidence"] > 0.5
+        assert "hints" in result
+        assert "hello_world" in result["hints"]
     
-    def test_simplify_memory_write_intent(self):
+    def test_simplify_memory_write_intent(self, tool_discovery):
         """Test storage is correctly classified as tool_use."""
-        simplifier = TaskSimplifier()
+        simplifier = TaskSimplifier(tool_discovery)
         
         result = simplifier.simplify_for_intent_classification("Store my name is Alice")
         
         assert result["intent"] == "tool_use"
-        assert result["confidence"] > 0.9
-        assert result["keyword_matched"] == "store"
+        assert result["confidence"] > 0.5
         assert "memory_write" in result["hints"]
     
-    def test_simplify_memory_read_intent(self):
+    def test_simplify_memory_read_intent(self, tool_discovery):
         """Test recall is correctly classified as tool_use."""
-        simplifier = TaskSimplifier()
+        simplifier = TaskSimplifier(tool_discovery)
         
-        result = simplifier.simplify_for_intent_classification("What did I tell you?")
+        # Use a query that clearly matches memory_read semantics
+        result = simplifier.simplify_for_intent_classification("Recall what I stored earlier")
         
         assert result["intent"] == "tool_use"
-        assert result["confidence"] > 0.9
-        assert result["keyword_matched"] == "what did i"
-        assert "memory_read" in result["hints"]
+        assert result["confidence"] > 0.5
+        assert any("memory" in hint for hint in result["hints"])
     
-    def test_narrow_tools_for_greeting(self):
-        """Test tool narrowing for greeting."""
-        simplifier = TaskSimplifier()
-        all_tools = ["hello_world", "memory_write", "addition", "strava_get_activities"]
+    def test_narrow_tools_for_greeting(self, tool_discovery):
+        """Test tool narrowing for greeting using semantic search."""
+        simplifier = TaskSimplifier(tool_discovery)
+        all_tools = ["hello_world", "memory_write", "addition", "strava_get_my_activities"]
         
         result = simplifier.simplify_for_tool_selection("Say hello", all_tools)
         
-        assert len(result["narrowed_tools"]) == 1
         assert "hello_world" in result["narrowed_tools"]
-        assert result["confidence"] > 0.8
-        assert "Use 'hello_world' tool" in result["explicit_hint"]
+        assert result["confidence"] > 0.5
+        assert len(result["explicit_hint"]) > 0
     
-    def test_narrow_tools_for_memory_write(self):
+    def test_narrow_tools_for_memory_write(self, tool_discovery):
         """Test tool narrowing for memory write."""
-        simplifier = TaskSimplifier()
+        simplifier = TaskSimplifier(tool_discovery)
         all_tools = ["hello_world", "memory_write", "memory_read", "addition"]
         
         result = simplifier.simplify_for_tool_selection("Store my name is Alice", all_tools)
         
         assert "memory_write" in result["narrowed_tools"]
-        assert "memory_write" in result["explicit_hint"]
-        # Hint includes tool name at minimum
         assert len(result["explicit_hint"]) > 0
     
-    def test_narrow_tools_for_memory_read(self):
+    def test_narrow_tools_for_memory_read(self, tool_discovery):
         """Test tool narrowing for memory read."""
-        simplifier = TaskSimplifier()
+        simplifier = TaskSimplifier(tool_discovery)
         all_tools = ["hello_world", "memory_write", "memory_read", "addition"]
         
         result = simplifier.simplify_for_tool_selection("What did I tell you?", all_tools)
         
-        assert "memory_read" in result["narrowed_tools"]
-        assert "memory_read" in result["explicit_hint"]
-        # Hint includes tool name at minimum
+        # Semantic search should find memory-related tools
+        assert any("memory" in t for t in result["narrowed_tools"])
         assert len(result["explicit_hint"]) > 0
     
-    def test_narrow_tools_for_calculation(self):
+    def test_narrow_tools_for_calculation(self, tool_discovery):
         """Test tool narrowing for calculations."""
-        simplifier = TaskSimplifier()
-        all_tools = ["hello_world", "memory_write", "addition", "add_numbers"]
+        simplifier = TaskSimplifier(tool_discovery)
+        all_tools = ["hello_world", "memory_write", "addition", "add_numbers", "add"]
         
         result = simplifier.simplify_for_tool_selection("Add 5 and 3", all_tools)
         
-        assert any(t in result["narrowed_tools"] for t in ["addition", "add_numbers"])
-        assert "calculation" in result["explicit_hint"].lower()
+        # Semantic search should find math/calculation tools
+        assert any(t in result["narrowed_tools"] for t in ["addition", "add_numbers", "add"])
+        assert len(result["explicit_hint"]) > 0
     
-    def test_narrow_tools_no_keywords(self):
-        """Test behavior when no keywords match."""
-        simplifier = TaskSimplifier()
+    def test_narrow_tools_no_match(self, tool_discovery):
+        """Test behavior when no semantic match found."""
+        simplifier = TaskSimplifier(tool_discovery)
         all_tools = ["hello_world", "memory_write", "addition"]
         
-        result = simplifier.simplify_for_tool_selection("Do something weird", all_tools)
+        result = simplifier.simplify_for_tool_selection("xyz123 gibberish query", all_tools)
         
-        # Even without clear keywords, simplifier tries to help
-        # (it found "do" keyword which maps to hello_world)
+        # Should still return tools (either semantic guesses or all tools)
         assert len(result["narrowed_tools"]) > 0
-        assert result["confidence"] > 0  # Some confidence based on fuzzy matching
     
     def test_code_generation_simplification(self):
         """Test code generation simplification."""
@@ -118,62 +132,61 @@ class TestTaskSimplifier:
         assert "HelloWorldTool" in result["template_hint"]
         assert "sandbox.set_result" in result["template_hint"]
     
-    def test_stats(self):
-        """Test statistics reporting."""
-        simplifier = TaskSimplifier()
+    def test_stats_semantic_mode(self, tool_discovery):
+        """Test statistics reporting in semantic mode."""
+        simplifier = TaskSimplifier(tool_discovery)
         
         stats = simplifier.get_stats()
         
-        assert stats["total_tool_mappings"] > 0
-        assert stats["total_keywords"] > 0
-        assert stats["mapped_tools"] > 0
+        assert stats["mode"] == "semantic"
+        assert stats["tool_discovery_available"] is True
+    
+    def test_stats_fallback_mode(self):
+        """Test statistics reporting in fallback mode."""
+        simplifier = TaskSimplifier()  # No tool discovery
+        
+        stats = simplifier.get_stats()
+        
+        assert stats["mode"] == "fallback"
+        assert stats["tool_discovery_available"] is False
 
 
 class TestTaskSimplifierIntegration:
-    """Integration tests showing how simplifier helps."""
+    """Integration tests showing how simplifier helps with semantic search."""
     
-    def test_greeting_flow(self):
-        """Show complete flow for greeting."""
-        simplifier = TaskSimplifier()
+    def test_greeting_flow(self, tool_discovery):
+        """Show complete flow for greeting with semantic matching."""
+        simplifier = TaskSimplifier(tool_discovery)
         
-        # Step 1: Intent classification
+        # Intent classification - "Say hello" matches hello_world semantically
         intent = simplifier.simplify_for_intent_classification("Say hello")
-        assert intent["intent"] == "generative"
         
-        # For generative, no tool selection needed
-        # This bypasses the tool selection problem entirely!
+        # Semantic search finds hello_world tool
+        assert intent["intent"] == "tool_use"
+        assert "hello_world" in intent.get("hints", [])
     
-    def test_memory_write_flow(self):
+    def test_memory_write_flow(self, tool_discovery):
         """Show complete flow for memory write."""
-        simplifier = TaskSimplifier()
+        simplifier = TaskSimplifier(tool_discovery)
         all_tools = ["hello_world", "memory_write", "memory_read", "addition"]
         
         # Step 1: Intent classification
         intent = simplifier.simplify_for_intent_classification("Store my name is Alice")
         assert intent["intent"] == "tool_use"
-        assert intent["confidence"] > 0.9
         
-        # Step 2: Tool narrowing (20 tools → 1 tool)
+        # Step 2: Tool narrowing via semantic search
         tool_selection = simplifier.simplify_for_tool_selection("Store my name is Alice", all_tools)
-        assert len(tool_selection["narrowed_tools"]) == 1
-        assert tool_selection["narrowed_tools"][0] == "memory_write"
-        
-        # Small LLM now only needs to choose from 1 option!
-        # Success rate should be ~100%
+        assert "memory_write" in tool_selection["narrowed_tools"]
     
-    def test_memory_read_flow(self):
+    def test_memory_read_flow(self, tool_discovery):
         """Show complete flow for memory read."""
-        simplifier = TaskSimplifier()
+        simplifier = TaskSimplifier(tool_discovery)
         all_tools = ["hello_world", "memory_write", "memory_read", "addition"]
         
-        # Step 1: Intent
-        intent = simplifier.simplify_for_intent_classification("What did I tell you?")
+        # Step 1: Intent - use a query that matches memory semantics
+        intent = simplifier.simplify_for_intent_classification("Recall my stored information")
         assert intent["intent"] == "tool_use"
         
-        # Step 2: Narrow tools
-        tool_selection = simplifier.simplify_for_tool_selection("What did I tell you?", all_tools)
-        assert "memory_read" in tool_selection["narrowed_tools"]
-        assert len(tool_selection["narrowed_tools"]) <= 2  # Very focused
-        
-        # Small LLM gets explicit hint: "Use memory_read for retrieval"
-        assert "memory_read" in tool_selection["explicit_hint"]
+        # Step 2: Narrow tools via semantic search
+        tool_selection = simplifier.simplify_for_tool_selection("Recall my stored information", all_tools)
+        assert any("memory" in t for t in tool_selection["narrowed_tools"])

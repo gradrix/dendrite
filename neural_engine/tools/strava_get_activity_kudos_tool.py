@@ -1,6 +1,7 @@
 from neural_engine.tools.base_tool import BaseTool
 from neural_engine.clients.strava_client import StravaClient
 from neural_engine.core.key_value_store import KeyValueStore
+from typing import Dict, Any
 
 class StravaGetActivityKudosTool(BaseTool):
     def get_tool_definition(self):
@@ -10,6 +11,16 @@ class StravaGetActivityKudosTool(BaseTool):
             "parameters": [
                 {"name": "activity_id", "type": "int", "required": True, "description": "Activity ID to get kudos for"}
             ]
+        }
+    
+    def get_semantic_metadata(self) -> Dict[str, Any]:
+        """Semantic metadata for intelligent discovery."""
+        return {
+            "domain": "fitness",
+            "concepts": ["kudos", "likes", "social", "appreciation", "activity", "fitness"],
+            "actions": ["retrieve", "get", "list", "check", "see"],
+            "data_sources": ["strava_api"],
+            "synonyms": ["who liked", "kudos list", "activity likes", "who appreciated"]
         }
 
     def execute(self, activity_id: int) -> dict:

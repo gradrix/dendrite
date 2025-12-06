@@ -1,7 +1,7 @@
 from neural_engine.tools.base_tool import BaseTool
 from neural_engine.clients.strava_client import StravaClient
 from neural_engine.core.key_value_store import KeyValueStore
-from typing import Optional
+from typing import Optional, Dict, Any
 
 class StravaGetDashboardFeedTool(BaseTool):
     def get_tool_definition(self):
@@ -12,6 +12,16 @@ class StravaGetDashboardFeedTool(BaseTool):
                 {"name": "hours_ago", "type": "int", "required": False, "description": "Filter activities from last N hours (e.g., 1 for last hour, 24 for last day)"},
                 {"name": "num_entries", "type": "int", "required": False, "default": 20, "description": "Number of activities to fetch (default 20)"}
             ]
+        }
+    
+    def get_semantic_metadata(self) -> Dict[str, Any]:
+        """Semantic metadata for intelligent discovery."""
+        return {
+            "domain": "fitness",
+            "concepts": ["social", "friends", "feed", "following", "community", "fitness", "activities"],
+            "actions": ["retrieve", "list", "fetch", "get", "show"],
+            "data_sources": ["strava_api", "social_feed"],
+            "synonyms": ["friends activities", "dashboard", "following", "social feed", "what are my friends doing"]
         }
 
     def execute(self, hours_ago: Optional[int] = None, num_entries: int = 20) -> dict:

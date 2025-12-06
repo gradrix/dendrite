@@ -51,7 +51,7 @@ class ToolDiscovery:
     def index_all_tools(self):
         """
         Index all tools in the registry for semantic search.
-        Call this after adding new tools or during initialization.
+        Uses semantic metadata when available for richer discovery.
         """
         print(f"Indexing tools from registry...")
         
@@ -67,25 +67,51 @@ class ToolDiscovery:
         metadatas = []
         ids = []
         
-        for tool_name, tool_class in tools.items():
-            # Create rich description for embeddings
-            description = getattr(tool_class, 'description', '')
-            params = getattr(tool_class, 'parameters', {})
+        for tool_name, tool_instance in tools.items():
+            # Get tool definition
+            tool_def = tool_instance.get_tool_definition()
+            description = tool_def.get('description', '')
+            params = tool_def.get('parameters', [])
             
-            # Build searchable document
+            # Build param description
             param_desc = " ".join([
-                f"{name}: {info.get('description', '')}"
-                for name, info in params.items()
+                f"{p.get('name', '')}: {p.get('description', '')}"
+                for p in params if isinstance(p, dict)
             ])
             
-            document = f"{tool_name} {description} {param_desc}"
+            # Get semantic metadata if available (NEW!)
+            semantic_meta = {}
+            if hasattr(tool_instance, 'get_semantic_metadata'):
+                semantic_meta = tool_instance.get_semantic_metadata()
             
-            documents.append(document)
-            metadatas.append({
+            # Build RICH searchable document with semantic concepts
+            # This allows "runs" to match tools with concept "running"
+            document_parts = [tool_name, description, param_desc]
+            
+            if semantic_meta:
+                # Add domain and concepts for semantic matching
+                if semantic_meta.get('domain'):
+                    document_parts.append(f"domain: {semantic_meta['domain']}")
+                if semantic_meta.get('concepts'):
+                    document_parts.append(f"concepts: {' '.join(semantic_meta['concepts'])}")
+                if semantic_meta.get('actions'):
+                    document_parts.append(f"actions: {' '.join(semantic_meta['actions'])}")
+                if semantic_meta.get('synonyms'):
+                    document_parts.append(f"synonyms: {' '.join(semantic_meta['synonyms'])}")
+            
+            document = " ".join(document_parts)
+            
+            # Store metadata for filtering/debugging
+            metadata = {
                 "tool_name": tool_name,
                 "description": description,
-                "parameter_count": len(params)
-            })
+                "parameter_count": len(params),
+                "domain": semantic_meta.get('domain', 'general'),
+                "has_semantic_metadata": bool(semantic_meta.get('concepts'))
+            }
+            
+            documents.append(document)
+            metadatas.append(metadata)
             ids.append(tool_name)
         
         # Add to Chroma (upsert - will update if already exists)
@@ -107,7 +133,7 @@ class ToolDiscovery:
             n_results: Number of candidates to return
         
         Returns:
-            List of dicts with tool_name and distance/similarity score
+            List of dicts with tool_name, distance, description, and domain
         """
         if n_results <= 0:
             return []
@@ -122,7 +148,7 @@ class ToolDiscovery:
             n_results=min(n_results, self.collection.count())
         )
         
-        # Format results as list of dicts
+        # Format results as list of dicts with domain metadata
         candidates = []
         if results['ids'] and len(results['ids']) > 0:
             tool_names = results['ids'][0]
@@ -133,7 +159,9 @@ class ToolDiscovery:
                 candidates.append({
                     'tool_name': tool_name,
                     'distance': distance,
-                    'description': metadata.get('description', '')
+                    'description': metadata.get('description', ''),
+                    'domain': metadata.get('domain', 'general'),  # Include domain for routing!
+                    'has_semantic_metadata': metadata.get('has_semantic_metadata', False)
                 })
         
         return candidates
