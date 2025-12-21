@@ -53,3 +53,54 @@ The agent is part of a larger ecosystem that allows it to monitor its own perfor
 -   [ ] **Implement the "Public Pipe":** Set up the Redis stream for neuron event publishing.
 -   [ ] **Implement the `PerformanceMonitorNeuron`:** Create the meta-agent to observe the Public Pipe and generate self-improvement goals.
 -   [ ] **Implement the `Scheduler`:** Create the service for managing and executing recurring, long-term goals.
+
+---
+
+## Production Deployment (Added 2024)
+
+### Infrastructure (✅ Created)
+- [x] **Production CLI** (`dendrite.py`): Queue/worker pattern for background processing
+- [x] **Docker Compose** (`docker-compose.prod.yml`): Production-ready with health checks, restart policies
+- [x] **Setup Script** (`scripts/setup-production.sh`): One-command deployment
+
+### Pending Production Tasks
+- [ ] **Structured Logging**: Replace print() with JSON logging
+- [ ] **Metrics**: Prometheus endpoint for monitoring
+- [ ] **HTTP API Mode**: REST server for external integrations
+- [ ] **Graceful Shutdown**: Handle SIGTERM in worker processes
+
+### Model Optimization (16GB RAM, No GPU)
+Recommended models for constrained environments:
+
+| Model | Size | Use Case |
+|-------|------|----------|
+| `qwen2.5-1.5b` | 1GB | Minimal, for 8GB RAM |
+| `qwen2.5-3b` | 2GB | Best balance for 16GB RAM |
+| `qwen2.5-7b` | 4.5GB | High quality, for 32GB RAM |
+| `qwen2.5-32b` | 20GB | Maximum quality, for 64GB RAM |
+
+### LLM Backend: llama.cpp
+
+The project uses **llama.cpp** for LLM inference with automatic model management.
+
+**Key files:**
+- `start.sh` - One-command startup (idempotent)
+- `neural_engine/core/llm_client.py` - Unified LLM client
+- `scripts/model-init.sh` - Downloads GGUF model on first run
+- `scripts/model-updater.sh` - Background update checker (optional)
+
+**Quick Start:**
+```bash
+./start.sh          # CPU mode (default)
+./start.sh gpu      # GPU mode (NVIDIA)
+./start.sh stop     # Stop all
+./start.sh status   # Check status
+./start.sh test     # Run tests
+```
+
+**Change model size:**
+```bash
+RAM_PROFILE=8gb ./start.sh   # Use smaller model
+RAM_PROFILE=32gb ./start.sh  # Use larger model
+```
+

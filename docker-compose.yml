@@ -1,4 +1,78 @@
 services:
+  # Model initialization - downloads GGUF model on first run
+  model-init:
+    image: python:3.11-slim
+    container_name: dendrite-model-init
+    volumes:
+      - models:/models
+      - ./scripts/model-init.sh:/init.sh:ro
+    environment:
+      RAM_PROFILE: "${RAM_PROFILE:-16gb}"
+    entrypoint: ["/bin/bash", "/init.sh"]
+    profiles:
+      - cpu
+      - gpu
+
+  # llama.cpp server (CPU)
+  llama-cpu:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: dendrite-llama-cpu
+    ports:
+      - "8080:8080"
+    volumes:
+      - models:/models
+    environment:
+      LLAMA_ARG_MODEL: /models/current.gguf
+      LLAMA_ARG_CTX_SIZE: "4096"
+      LLAMA_ARG_N_GPU_LAYERS: "0"
+      LLAMA_ARG_THREADS: "8"
+      LLAMA_ARG_HOST: "0.0.0.0"
+      LLAMA_ARG_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    profiles:
+      - cpu
+
+  # llama.cpp server (GPU)
+  llama-gpu:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: dendrite-llama-gpu
+    ports:
+      - "8080:8080"
+    volumes:
+      - models:/models
+    environment:
+      LLAMA_ARG_MODEL: /models/current.gguf
+      LLAMA_ARG_CTX_SIZE: "8192"
+      LLAMA_ARG_N_GPU_LAYERS: "999"
+      LLAMA_ARG_HOST: "0.0.0.0"
+      LLAMA_ARG_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    profiles:
+      - gpu
+
   app:
     build:
       context: .
@@ -8,12 +82,14 @@ services:
       - kv_store:/app/var
     environment:
       - REDIS_HOST=redis
-      - OLLAMA_HOST=http://ollama:11434
+      - OPENAI_API_BASE=http://llama-cpu:8080/v1
+      - OPENAI_API_KEY=not-needed
+      - LLM_MODEL=local-model
     depends_on:
       redis:
         condition: service_started
-      ollama-cpu:
-        condition: service_started
+      llama-cpu:
+        condition: service_healthy
     profiles:
       - cpu
 
@@ -26,12 +102,14 @@ services:
       - kv_store:/app/var
     environment:
       - REDIS_HOST=redis
-      - OLLAMA_HOST=http://ollama:11434
+      - OPENAI_API_BASE=http://llama-gpu:8080/v1
+      - OPENAI_API_KEY=not-needed
+      - LLM_MODEL=local-model
     depends_on:
       redis:
         condition: service_started
-      ollama:
-        condition: service_started
+      llama-gpu:
+        condition: service_healthy
     profiles:
       - gpu
 
@@ -60,34 +138,6 @@ services:
       timeout: 5s
       retries: 5
 
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    # GPU support is optional - enable with: docker compose --profile gpu up
-    # CI and CPU-only environments will work without GPU
-    profiles:
-      - gpu
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-  
-  # CPU-only Ollama service for CI/testing environments without GPU
-  ollama-cpu:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    profiles:
-      - cpu
-
   tests:
     build:
       context: .
@@ -95,14 +145,15 @@ services:
     depends_on:
       redis:
         condition: service_started
-      ollama-cpu:
-        condition: service_started
+      llama-cpu:
+        condition: service_healthy
       postgres:
         condition: service_healthy
     environment:
       REDIS_HOST: redis
-      OLLAMA_HOST: http://ollama-cpu:11434
-      OLLAMA_MODEL: mistral
+      OPENAI_API_BASE: http://llama-cpu:8080/v1
+      OPENAI_API_KEY: not-needed
+      LLM_MODEL: local-model
       POSTGRES_HOST: postgres
       POSTGRES_DB: dendrite
       POSTGRES_USER: dendrite
@@ -123,14 +174,15 @@ services:
     depends_on:
       redis:
         condition: service_started
-      ollama:
-        condition: service_started
+      llama-gpu:
+        condition: service_healthy
       postgres:
         condition: service_healthy
     environment:
       REDIS_HOST: redis
-      OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: mistral
+      OPENAI_API_BASE: http://llama-gpu:8080/v1
+      OPENAI_API_KEY: not-needed
+      LLM_MODEL: local-model
       POSTGRES_HOST: postgres
       POSTGRES_DB: dendrite
       POSTGRES_USER: dendrite
@@ -147,8 +199,9 @@ services:
 volumes:
   redis_data:
   postgres_data:
-  ollama_data:
+  models:
+    name: dendrite-models
   kv_store:
   huggingface_cache:  # Persist SentenceTransformer model downloads (90MB)
-  chroma_cache:  # Persist ChromaDB ONNX model downloads (79MB)
+  chroma_cache:  # Persist ChromaDB ONNX models downloads (79MB)
   chroma_data:  # Persist Chroma vector database (neural pathways)

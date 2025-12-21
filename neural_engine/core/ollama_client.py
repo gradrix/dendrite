@@ -1,33 +1,74 @@
-import ollama
+"""
+OllamaClient - Backward compatibility wrapper
+
+This module is DEPRECATED. Use LLMClient instead.
+LLMClient auto-detects and works with both Ollama and llama.cpp.
+
+This file now acts as a compatibility shim that:
+1. Tries to use LLMClient (works with llama.cpp or Ollama)
+2. Falls back to direct Ollama if LLMClient fails
+
+Migration path:
+  Old: from neural_engine.core.ollama_client import OllamaClient
+  New: from neural_engine.core.llm_client import LLMClient
+"""
+
 import os
 import logging
 from .exceptions import TokenLimitExceeded
 
+logger = logging.getLogger(__name__)
+
 
 class OllamaClient:
+    """
+    DEPRECATED: Use LLMClient instead.
+    
+    This class now delegates to LLMClient which supports both
+    Ollama and llama.cpp backends.
+    """
+    
     def __init__(self, debug_mode: bool = None):
-        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-        self.model = os.environ.get("OLLAMA_MODEL", "mistral")
-        self.client = ollama.Client(host=host)
-        
-        # Debug mode can be set explicitly or via environment variable
         if debug_mode is None:
             debug_mode = os.environ.get("DEBUG_LLM", "false").lower() == "true"
         self.debug_mode = debug_mode
         
+        # Try to use the unified LLMClient
+        try:
+            from .llm_client import LLMClient
+            self._client = LLMClient(debug_mode=debug_mode)
+            self._use_llm_client = True
+            self.model = self._client.model
+            self.token_limit = self._client.token_limit
+            if debug_mode:
+                print("🔄 OllamaClient using LLMClient backend")
+        except Exception as e:
+            logger.warning(f"LLMClient unavailable, falling back to direct Ollama: {e}")
+            self._use_llm_client = False
+            self._init_direct_ollama()
+        
+        self._call_counter = 0
+    
+    def _init_direct_ollama(self):
+        """Initialize direct Ollama connection (legacy fallback)."""
+        import ollama
+        
+        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        self.model = os.environ.get("OLLAMA_MODEL", "mistral")
+        self._ollama_client = ollama.Client(host=host)
+        
         if self.debug_mode:
-            print("🔍 LLM Debug Mode: ENABLED")
+            print("🔍 LLM Debug Mode: ENABLED (Direct Ollama)")
             print(f"   Model: {self.model}")
             print(f"   Host: {host}")
         
-        self._call_counter = 0
-        
-        # Model-specific token limits (can be overridden)
+        # Model-specific token limits
         self.token_limits = {
             "mistral": 4096,
             "llama2": 4096,
             "codellama": 16384,
             "llama3": 8192,
+            "qwen": 8192,
         }
         self.token_limit = self.token_limits.get(self.model.split(":")[0], 4096)
         
@@ -36,13 +77,17 @@ class OllamaClient:
     def _ensure_model_is_available(self):
         """
         Checks if the required model is available locally and pulls it if not.
+        Only used when in direct Ollama mode.
         """
+        if self._use_llm_client:
+            return  # LLMClient handles this
+            
         max_retries = 3
         retry_delay = 2
         
         for attempt in range(max_retries):
             try:
-                local_models = self.client.list()["models"]
+                local_models = self._ollama_client.list()["models"]
                 model_names = [model["model"] for model in local_models]
 
                 # The API might return the model name with a default tag, e.g., 'mistral:latest'
@@ -52,7 +97,7 @@ class OllamaClient:
                     return
 
                 print(f"Model '{self.model}' not found locally. Pulling from registry...")
-                self.client.pull(self.model)
+                self._ollama_client.pull(self.model)
                 print(f"Model '{self.model}' pulled successfully.")
                 return
 
@@ -68,7 +113,7 @@ class OllamaClient:
                     # Re-raise to make the startup failure obvious
                     raise
 
-    def generate(self, prompt, context: str = None, check_tokens: bool = True):
+    def generate(self, prompt, context: str = None, check_tokens: bool = True, model: str = None):
         """
         Generate response from prompt.
         
@@ -76,6 +121,7 @@ class OllamaClient:
             prompt: Text prompt
             context: Optional context description for error messages
             check_tokens: Whether to estimate and check token count
+            model: Optional model override (ignored for llama.cpp)
         
         Returns:
             Response dict
@@ -83,6 +129,11 @@ class OllamaClient:
         Raises:
             TokenLimitExceeded: If prompt exceeds model's token limit
         """
+        # Delegate to LLMClient if available
+        if self._use_llm_client:
+            return self._client.generate(prompt, context=context, check_tokens=check_tokens)
+        
+        # Direct Ollama fallback
         if check_tokens:
             estimated_tokens = self._estimate_tokens(prompt)
             if estimated_tokens > self.token_limit:
@@ -102,7 +153,8 @@ class OllamaClient:
                 estimated_tokens=self._estimate_tokens(prompt) if check_tokens else None
             )
         
-        response = self.client.generate(model=self.model, prompt=prompt)
+        use_model = model or self.model
+        response = self._ollama_client.generate(model=use_model, prompt=prompt)
         
         # Debug logging after call
         if self.debug_mode:
@@ -138,6 +190,11 @@ class OllamaClient:
                 {"role": "user", "content": "How are you?"}  # Actual query
             ]
         """
+        # Delegate to LLMClient if available
+        if self._use_llm_client:
+            return self._client.chat(messages, options=options, context=context)
+        
+        # Direct Ollama fallback
         # Debug logging before call
         if self.debug_mode:
             self._call_counter += 1
@@ -150,7 +207,7 @@ class OllamaClient:
                 estimated_tokens=None
             )
         
-        response = self.client.chat(
+        response = self._ollama_client.chat(
             model=self.model, 
             messages=messages,
             options=options or {}

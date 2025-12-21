@@ -3,6 +3,7 @@ pytest-asyncio
 pytest-mock
 debugpy
 ollama
+openai
 redis
 requests
 fastapi
@@ -13,3 +14,4 @@ psycopg2-binary
 chromadb
 sentence-transformers
 numpy
+aiohttp
