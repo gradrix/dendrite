@@ -15,3 +15,4 @@ chromadb
 sentence-transformers
 numpy
 aiohttp
+croniter

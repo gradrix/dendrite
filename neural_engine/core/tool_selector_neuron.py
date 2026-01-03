@@ -6,8 +6,12 @@ from .pattern_cache import PatternCache
 from .domain_router import DomainRouter
 from .memory_operations_specialist import MemoryOperationsSpecialist
 from .voting_tool_selector import VotingToolSelector
+from .logging import get_logger
 from typing import Optional, Dict, List, Tuple
 import json
+
+logger = get_logger(__name__)
+
 
 class ToolSelectorNeuron(BaseNeuron):
     def __init__(self, message_bus, ollama_client, tool_registry, 

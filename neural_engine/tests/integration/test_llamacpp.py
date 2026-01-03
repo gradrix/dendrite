@@ -27,8 +27,11 @@ from typing import Generator
 # Test configuration - check multiple possible URLs
 LLAMACPP_URLS = [
     os.environ.get("LLAMACPP_TEST_URL"),  # Explicit override
-    "http://llama-cpu:8080",  # Docker internal network
-    "http://dendrite-llama-cpu:8080",  # Docker container name
+    os.environ.get("OPENAI_API_BASE", "").replace("/v1", ""),  # From env
+    "http://llama-gpu:8080",  # Docker internal network (GPU)
+    "http://llama-cpu:8080",  # Docker internal network (CPU)
+    "http://dendrite-llama-gpu:8080",  # Docker container name (GPU)
+    "http://dendrite-llama-cpu:8080",  # Docker container name (CPU)
     "http://localhost:8080",  # Host machine
     "http://localhost:18080",  # Test port
 ]

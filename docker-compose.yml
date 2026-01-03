@@ -138,6 +138,90 @@ services:
       timeout: 5s
       retries: 5
 
+  # HTTP API server (CPU)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dendrite-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - kv_store:/app/var
+      - huggingface_cache:/root/.cache/huggingface
+      - chroma_cache:/root/.cache/chroma
+      - chroma_data:/app/chroma_data
+    environment:
+      REDIS_HOST: redis
+      OPENAI_API_BASE: http://llama-cpu:8080/v1
+      OPENAI_API_KEY: not-needed
+      LLM_MODEL: local-model
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: dendrite
+      POSTGRES_USER: dendrite
+      POSTGRES_PASSWORD: dendrite_pass
+      DENDRITE_LOG_FORMAT: json
+      DENDRITE_LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_started
+      llama-cpu:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: ["python", "-m", "uvicorn", "neural_engine.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    profiles:
+      - api
+
+  # HTTP API server (GPU)
+  api-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dendrite-api-gpu
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - kv_store:/app/var
+      - huggingface_cache:/root/.cache/huggingface
+      - chroma_cache:/root/.cache/chroma
+      - chroma_data:/app/chroma_data
+    environment:
+      REDIS_HOST: redis
+      OPENAI_API_BASE: http://llama-gpu:8080/v1
+      OPENAI_API_KEY: not-needed
+      LLM_MODEL: local-model
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: dendrite
+      POSTGRES_USER: dendrite
+      POSTGRES_PASSWORD: dendrite_pass
+      DENDRITE_LOG_FORMAT: json
+      DENDRITE_LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_started
+      llama-gpu:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: ["python", "-m", "uvicorn", "neural_engine.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    profiles:
+      - gpu-api
+
   tests:
     build:
       context: .

@@ -10,6 +10,9 @@ from neural_engine.core.tool_lifecycle_manager import ToolLifecycleManager
 from neural_engine.core.error_recovery_neuron import ErrorRecoveryNeuron
 from neural_engine.core.result_validator_neuron import ResultValidatorNeuron
 from neural_engine.core.ollama_client import OllamaClient
+from neural_engine.core.logging import get_logger, log_event, EventType
+
+logger = get_logger(__name__)
 
 class Orchestrator:
     def __init__(self, intent_classifier=None, tool_selector=None, code_generator=None, 
@@ -82,7 +85,7 @@ class Orchestrator:
                 self.execution_store = ExecutionStore()
             except Exception as e:
                 # If PostgreSQL is not available, continue without logging
-                print(f"Warning: ExecutionStore not available: {e}")
+                logger.warning("ExecutionStore not available", error=str(e))
                 self.execution_store = None
         
         # Initialize ToolDiscovery for semantic search (Phase 8d)
@@ -98,9 +101,9 @@ class Orchestrator:
                     )
                     # Index all tools on initialization
                     self.tool_discovery.index_all_tools()
-                    print(f"✓ Semantic tool discovery enabled ({self.tool_discovery.collection.count()} tools indexed)")
+                    logger.info("Semantic tool discovery enabled", tools_indexed=self.tool_discovery.collection.count())
             except Exception as e:
-                print(f"Warning: ToolDiscovery not available: {e}")
+                logger.warning("ToolDiscovery not available", error=str(e))
                 self.tool_discovery = None
         
         # Initialize ToolLifecycleManager for autonomous lifecycle management (Phase 9d)
@@ -116,16 +119,11 @@ class Orchestrator:
                     # Run initial sync to detect any orphaned tools
                     sync_report = self.lifecycle_manager.sync_and_reconcile()
                     if sync_report['newly_deleted'] or sync_report['alerts']:
-                        print(f"✓ Tool lifecycle sync enabled")
-                        if sync_report['newly_deleted']:
-                            print(f"  - Detected {len(sync_report['newly_deleted'])} deleted tools")
-                        if sync_report['alerts']:
-                            print(f"  ⚠️  {len(sync_report['alerts'])} alerts generated")
-                            for alert in sync_report['alerts']:
-                                if alert.get('alert'):
-                                    print(f"     - {alert['tool_name']}: {alert.get('reason', 'unknown')}")
+                        logger.info("Tool lifecycle sync enabled",
+                                   deleted_tools=len(sync_report['newly_deleted']),
+                                   alerts=len(sync_report['alerts']))
             except Exception as e:
-                print(f"Warning: ToolLifecycleManager not available: {e}")
+                logger.warning("ToolLifecycleManager not available", error=str(e))
                 self.lifecycle_manager = None
         
         # Initialize ErrorRecoveryNeuron for intelligent error recovery (Phase 10d)
@@ -154,9 +152,9 @@ class Orchestrator:
                         tool_registry=tool_reg,
                         execution_store=self.execution_store
                     )
-                    print(f"✓ Error recovery enabled (retry, fallback, adapt strategies)")
+                    logger.info("Error recovery enabled", strategies=["retry", "fallback", "adapt"])
             except Exception as e:
-                print(f"Warning: ErrorRecoveryNeuron not available: {e}")
+                logger.warning("ErrorRecoveryNeuron not available", error=str(e))
                 self.error_recovery = None
     
     def process(self, goal: str, goal_id: Optional[str] = None, depth=0):

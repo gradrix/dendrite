@@ -52,7 +52,7 @@ The agent is part of a larger ecosystem that allows it to monitor its own perfor
 -   [ ] **Implement the `ToolForgeNeuron`:** Create the neuron capable of writing new Python tool files to the `tools/` directory.
 -   [ ] **Implement the "Public Pipe":** Set up the Redis stream for neuron event publishing.
 -   [ ] **Implement the `PerformanceMonitorNeuron`:** Create the meta-agent to observe the Public Pipe and generate self-improvement goals.
--   [ ] **Implement the `Scheduler`:** Create the service for managing and executing recurring, long-term goals.
+-   [x] **Implement the `Scheduler`:** Create the service for managing and executing recurring, long-term goals.
 
 ---
 
@@ -64,9 +64,10 @@ The agent is part of a larger ecosystem that allows it to monitor its own perfor
 - [x] **Setup Script** (`scripts/setup-production.sh`): One-command deployment
 
 ### Pending Production Tasks
-- [ ] **Structured Logging**: Replace print() with JSON logging
+- [x] **Structured Logging**: JSON logging module with environment-based formatting
 - [ ] **Metrics**: Prometheus endpoint for monitoring
-- [ ] **HTTP API Mode**: REST server for external integrations
+- [x] **HTTP API Mode**: REST server for external integrations (`./start.sh api`)
+- [x] **Scheduler**: Redis-based job queue with cron-like scheduling
 - [ ] **Graceful Shutdown**: Handle SIGTERM in worker processes
 
 ### Model Optimization (16GB RAM, No GPU)
@@ -93,6 +94,8 @@ The project uses **llama.cpp** for LLM inference with automatic model management
 ```bash
 ./start.sh          # CPU mode (default)
 ./start.sh gpu      # GPU mode (NVIDIA)
+./start.sh api      # HTTP API server (CPU)
+./start.sh api-gpu  # HTTP API server (GPU)
 ./start.sh stop     # Stop all
 ./start.sh status   # Check status
 ./start.sh test     # Run tests

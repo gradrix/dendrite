@@ -5,7 +5,11 @@ from .parallel_voter import ParallelVoter
 from .simple_voters import create_intent_voters
 from .semantic_intent_classifier import SemanticIntentClassifier
 from .domain_router import DomainRouter
+from .logging import get_logger
 from typing import Optional, List, Tuple, Dict
+
+logger = get_logger(__name__)
+
 
 class IntentClassifierNeuron(BaseNeuron):
     def __init__(self, *args, 
@@ -72,7 +76,7 @@ class IntentClassifierNeuron(BaseNeuron):
         if domain == "memory":
             # Memory operations ALWAYS require tools (memory_read/memory_write)
             intent = "tool_use"
-            print(f"🧠 Memory domain detected: '{goal}' → tool_use (override)")
+            logger.info("Memory domain detected", goal=goal, intent=intent, method="domain_override")
             
             self.add_message_with_metadata(
                 goal_id=goal_id,
@@ -98,7 +102,7 @@ class IntentClassifierNeuron(BaseNeuron):
             
             if cached_decision:
                 intent = cached_decision["intent"]
-                print(f"✓ Pattern cache hit: '{goal}' → {intent} (confidence: {cache_confidence:.2f})")
+                logger.debug("Pattern cache hit", goal=goal, intent=intent, confidence=cache_confidence)
                 
                 # Notify visualizer if available
                 if self.visualizer:
@@ -134,7 +138,9 @@ class IntentClassifierNeuron(BaseNeuron):
             intent = semantic_result["intent"]
             confidence = semantic_result["confidence"]
             
-            print(f"🎯 Semantic (keywords: {', '.join(semantic_result.get('keywords', [])[:3])}): '{goal}' → {intent} ({confidence:.0%}, {semantic_result['num_matched']}/{semantic_result['num_relevant']} facts)")
+            logger.info("Semantic classification", goal=goal, intent=intent, confidence=confidence,
+                        keywords=semantic_result.get('keywords', [])[:3],
+                        matched=semantic_result['num_matched'], relevant=semantic_result['num_relevant'])
             
             # If confidence is high enough, use it
             if confidence >= self.semantic_confidence_threshold:
@@ -163,7 +169,8 @@ class IntentClassifierNeuron(BaseNeuron):
                 return {"goal": goal, "intent": intent}
             else:
                 # Low confidence - fall through to voting
-                print(f"   ⚠️  Low confidence ({confidence:.0%} < {self.semantic_confidence_threshold:.0%}), falling back to voting...")
+                logger.debug("Low confidence, falling back to voting", confidence=confidence,
+                            threshold=self.semantic_confidence_threshold)
         
         # Stage 2.5: Parallel voting (fallback when semantic has low confidence)
         if self.use_parallel_voting and self.parallel_voter and self.voters:
@@ -172,12 +179,8 @@ class IntentClassifierNeuron(BaseNeuron):
             intent = vote_result["winner"]
             confidence = vote_result["confidence"]
             
-            print(f"🗳️  Parallel voting: '{goal}' → {intent} ({vote_result['num_votes']} votes, {confidence:.0%} agreement)")
-            
-            # Debug: Show individual votes
-            if vote_result.get("votes"):
-                for v in vote_result["votes"]:
-                    print(f"     • {v['label']} (conf:{v['confidence']:.1f}) - {v.get('question', '')[:50]}...")
+            logger.info("Parallel voting", goal=goal, intent=intent, num_votes=vote_result['num_votes'],
+                        confidence=confidence)
             
             # Store in cache for future use
             if self.use_pattern_cache and self.pattern_cache:
@@ -253,7 +256,7 @@ class IntentClassifierNeuron(BaseNeuron):
         
         # Validate intent
         if intent not in ["generative", "tool_use"]:
-            print(f"⚠️  Invalid intent '{intent}', defaulting to 'generative'")
+            logger.warning("Invalid intent, defaulting to generative", intent=intent)
             intent = "generative"
         
         # NOTE: Pattern cache storage moved to orchestrator AFTER execution validation
@@ -319,7 +322,7 @@ class IntentClassifierNeuron(BaseNeuron):
             elif "gen" in intent or "creative" in intent:
                 intent = "generative"
             else:
-                print(f"⚠️  Invalid intent '{intent}' from few-shot, defaulting to 'generative'")
+                logger.warning("Invalid intent from few-shot", intent=intent)
                 intent = "generative"
         
         return intent
@@ -359,7 +362,7 @@ class IntentClassifierNeuron(BaseNeuron):
             elif "gen" in intent or "creative" in intent:
                 intent = "generative"
             else:
-                print(f"⚠️  Invalid intent '{intent}' from zero-shot, defaulting to 'generative'")
+                logger.warning("Invalid intent from zero-shot", intent=intent)
                 intent = "generative"
         
         return intent
