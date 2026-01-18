@@ -1,0 +1,53 @@
+# Dendrite Scheduled Goals Configuration
+# 
+# Each goal runs on its own schedule. Supported schedule types:
+#   - interval: Run every N seconds
+#   - cron: Cron expression (minute hour day month weekday)
+#   - once: Run once on startup
+#
+# Goals can access state from previous runs via conditions.
+
+goals:
+  # Example: Fun fact every 5 minutes
+  - id: fun_facts
+    goal: "Tell me a one-sentence fun fact I haven't heard before"
+    schedule: interval
+    interval: 15  # 15 seconds for demo
+    enabled: true
+    tags: [demo, fun]
+
+  # Second goal for demo
+  - id: weather_check
+    goal: "What's a good activity for a sunny day?"
+    schedule: interval
+    interval: 25
+    enabled: true
+    tags: [demo]
+
+  # Example: Daily summary at 6pm
+  # - id: daily_summary
+  #   goal: "Summarize what I accomplished today"
+  #   schedule: cron
+  #   cron: "0 18 * * *"
+  #   enabled: true
+  #   tags: [productivity]
+
+  # Example: Hourly Strava check
+  # - id: strava_sync
+  #   goal: "Check my Strava activities and tell me if there are new kudos"
+  #   schedule: cron
+  #   cron: "0 * * * *"
+  #   enabled: true
+  #   max_failures: 3
+  #   tags: [strava, fitness]
+
+  # Example: One-time setup task
+  # - id: initial_setup
+  #   goal: "Initialize my workspace preferences"
+  #   schedule: once
+  #   enabled: true
+
+# Global settings
+settings:
+  check_interval: 5  # How often to check for due goals (seconds)
+  log_runs: true     # Log each run to console

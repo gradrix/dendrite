@@ -328,19 +328,43 @@ class Scheduler:
         
         return False
     
-    async def check_and_run(self) -> list[ScheduledRun]:
-        """Check all goals and run those that are due."""
-        goals = await self.store.list_goals(enabled_only=True)
-        runs = []
+    async def check_and_run(self, parallel: bool = True) -> list[ScheduledRun]:
+        """Check all goals and run those that are due.
         
+        Args:
+            parallel: If True, run due goals concurrently. Default True.
+        """
+        goals = await self.store.list_goals(enabled_only=True)
+        
+        # Find all goals that should run
+        due_goals = []
         for goal in goals:
             state = await self.store.get_state(goal.id)
             if self._should_run(goal, state):
                 logger.info(f"Running scheduled goal: {goal.id}")
+                due_goals.append(goal)
+        
+        if not due_goals:
+            return []
+        
+        # Run in parallel or sequentially
+        if parallel and len(due_goals) > 1:
+            tasks = [self._execute_goal(goal) for goal in due_goals]
+            runs = await asyncio.gather(*tasks, return_exceptions=True)
+            # Filter out exceptions and log them
+            result = []
+            for i, run in enumerate(runs):
+                if isinstance(run, Exception):
+                    logger.error(f"Goal {due_goals[i].id} raised exception: {run}")
+                else:
+                    result.append(run)
+            return result
+        else:
+            runs = []
+            for goal in due_goals:
                 run = await self._execute_goal(goal)
                 runs.append(run)
-        
-        return runs
+            return runs
     
     async def start(self):
         """Start the scheduler loop."""

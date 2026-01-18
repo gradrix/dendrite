@@ -16,3 +16,4 @@ sentence-transformers
 numpy
 aiohttp
 croniter
+pyyaml
