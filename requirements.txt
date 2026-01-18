@@ -2,8 +2,6 @@ pytest
 pytest-asyncio
 pytest-mock
 debugpy
-ollama
-openai
 redis
 requests
 fastapi

@@ -1,23 +1,24 @@
 """
 LLM Client - Single interface to language models.
 
-One client. One way to call LLMs. No wrappers around wrappers.
+Uses raw HTTP requests to llama.cpp server (no external dependencies).
 """
 
 import os
 import asyncio
+import json
+import requests
 from concurrent.futures import ThreadPoolExecutor
-from openai import OpenAI
 from typing import Optional, Dict, Any
 
 
-# Thread pool for running sync OpenAI client in async context
+# Thread pool for running sync requests in async context
 _executor = ThreadPoolExecutor(max_workers=4)
 
 
 class LLMClient:
     """
-    Simple LLM client using OpenAI-compatible API.
+    Simple LLM client using raw HTTP to llama.cpp server.
     
     Usage:
         llm = LLMClient(config)
@@ -25,15 +26,9 @@ class LLMClient:
     """
     
     def __init__(self, base_url: str = None, api_key: str = None, model: str = None):
-        self.base_url = base_url or os.environ.get("OPENAI_API_BASE", "http://llama-gpu:8080/v1")
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "not-needed")
+        self.base_url = (base_url or os.environ.get("LLM_BASE_URL", "http://llama-gpu:8080/v1")).rstrip("/")
         self.model = model or os.environ.get("LLM_MODEL", "local-model")
-        
-        self._client = OpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=30.0,
-        )
+        self.timeout = 120  # 2 minutes for generation
     
     def _generate_sync(
         self,
@@ -50,14 +45,21 @@ class LLMClient:
         
         messages.append({"role": "user", "content": prompt})
         
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
+        # Call llama.cpp OpenAI-compatible endpoint
+        response = requests.post(
+            f"{self.base_url}/chat/completions",
+            json={
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+            timeout=self.timeout,
         )
+        response.raise_for_status()
         
-        return response.choices[0].message.content.strip()
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
     
     async def generate(
         self,
@@ -96,8 +98,6 @@ class LLMClient:
         Uses temperature=0 for consistency.
         Parses and returns dict.
         """
-        import json
-        
         response = await self.generate(
             prompt=prompt,
             system=system,
@@ -122,6 +122,5 @@ class LLMClient:
         """Create from Config object."""
         return cls(
             base_url=config.llm_base_url,
-            api_key=config.llm_api_key,
             model=config.llm_model,
         )

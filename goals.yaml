@@ -9,20 +9,20 @@
 
 goals:
   # Example: Fun fact every 5 minutes
-  - id: fun_facts
-    goal: "Tell me a one-sentence fun fact I haven't heard before"
-    schedule: interval
-    interval: 15  # 15 seconds for demo
-    enabled: true
-    tags: [demo, fun]
+  # - id: fun_facts
+  #   goal: "Tell me a one-sentence fun fact I haven't heard before"
+  #   schedule: interval
+  #   interval: 15  # 15 seconds for demo
+  #   enabled: true
+  #   tags: [demo, fun]
 
-  # Second goal for demo
-  - id: weather_check
-    goal: "What's a good activity for a sunny day?"
-    schedule: interval
-    interval: 25
-    enabled: true
-    tags: [demo]
+  # # Second goal for demo
+  # - id: weather_check
+  #   goal: "What's a good activity for a sunny day?"
+  #   schedule: interval
+  #   interval: 25
+  #   enabled: true
+  #   tags: [demo]
 
   # Example: Daily summary at 6pm
   # - id: daily_summary
@@ -33,19 +33,22 @@ goals:
   #   tags: [productivity]
 
   # Example: Hourly Strava kudos check
-  # - id: get_strava_kudos
-  #   goal: "Use strava_collect_kudos_givers with hours_back=48"
-  #   schedule: cron
-  #   cron: "0 * * * *"
-  #   enabled: true
-  #   max_failures: 3
-  #   tags: [strava, fitness]
+  - id: get_strava_kudos
+    goal: "Use strava_collect_kudos_givers with hours_back=48"
+    schedule: cron
+    cron: "0 */4 * * *"  # Every 4 hours
+    enabled: true
+    max_failures: 3
+    tags: [strava, fitness]
 
-  # Example: One-time setup task
-  # - id: initial_setup
-  #   goal: "Use strava_reciprocate_kudos with count=20 and max_age_hours=24"
-  #   schedule: once
-  #   enabled: true
+  # Reciprocate kudos to people who gave you kudos
+  - id: reciprocate_kudos
+    goal: "Use strava_reciprocate_kudos with count=30 and max_age_hours=24"
+    schedule: cron
+    cron: "29 * * * *"  # Every 6 hours, offset by 30 min "30 */6 * * *" 
+    enabled: true
+    max_failures: 3
+    tags: [strava, fitness]
 
 # Global settings
 settings:

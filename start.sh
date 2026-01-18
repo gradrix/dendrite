@@ -163,13 +163,17 @@ case "$MODE" in
         fi
         log "Running single goal: $GOAL_TEXT"
         hw_mode=$(detect_gpu)
+        # Ensure dependencies are running first
+        docker compose --profile "$hw_mode" up -d postgres redis llama-$hw_mode
         docker compose --profile "$hw_mode" run --rm app-$hw_mode python main.py --goal "$GOAL_TEXT"
         exit 0
         ;;
     scheduler)
         log "Starting scheduler daemon..."
         hw_mode=$(detect_gpu)
-        docker compose --profile "$hw_mode" run --rm app-$hw_mode python main.py --scheduler
+        # Ensure dependencies are running first
+        docker compose --profile "$hw_mode" up -d postgres redis llama-$hw_mode
+        docker compose --profile "$hw_mode" run --rm app-$hw_mode python main.py --daemon --config goals.yaml
         exit 0
         ;;
     help|--help|-h)
