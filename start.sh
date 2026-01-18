@@ -111,6 +111,8 @@ cmd_help() {
     echo "  cpu           Force CPU mode"
     echo "  gpu           Force GPU mode (fails if no GPU)"
     echo "  api           Start HTTP API server (auto-detect hardware)"
+    echo "  goal \"...\"    Run a single goal and exit"
+    echo "  scheduler     Run the scheduler daemon (uses goals.yaml)"
     echo "  stop          Stop all services"
     echo "  status        Show service status"
     echo "  logs          Follow logs"
@@ -126,6 +128,8 @@ cmd_help() {
     echo "  ./start.sh cpu                # Force CPU mode"
     echo "  RAM_PROFILE=8gb ./start.sh    # Start with smaller model"
     echo "  ./start.sh api                # Start HTTP API (auto-detect)"
+    echo "  ./start.sh goal \"Get my Strava activities\"  # Run one goal"
+    echo "  ./start.sh scheduler          # Run scheduler daemon"
     echo "  ./start.sh test -k 'test_foo' # Run specific tests"
 }
 
@@ -149,6 +153,23 @@ case "$MODE" in
     test)
         shift
         cmd_test "$@"
+        exit 0
+        ;;
+    goal)
+        shift
+        GOAL_TEXT="$*"
+        if [ -z "$GOAL_TEXT" ]; then
+            error "Usage: ./start.sh goal \"Your goal here\""
+        fi
+        log "Running single goal: $GOAL_TEXT"
+        hw_mode=$(detect_gpu)
+        docker compose --profile "$hw_mode" run --rm app-$hw_mode python main.py --goal "$GOAL_TEXT"
+        exit 0
+        ;;
+    scheduler)
+        log "Starting scheduler daemon..."
+        hw_mode=$(detect_gpu)
+        docker compose --profile "$hw_mode" run --rm app-$hw_mode python main.py --scheduler
         exit 0
         ;;
     help|--help|-h)

@@ -151,35 +151,57 @@ class ToolRegistry:
         """
         Simple keyword-based tool search.
         
+        Tokenizes query and matches individual words against tools.
         For semantic search, use the full ToolDiscovery system.
         """
-        query_lower = query.lower()
+        # Tokenize query into words (lowercase, remove punctuation)
+        import re
+        query_words = set(re.findall(r'\w+', query.lower()))
+        
+        # Filter out common stop words
+        stop_words = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been',
+                      'to', 'from', 'of', 'in', 'on', 'at', 'for', 'with', 'by',
+                      'my', 'your', 'i', 'me', 'we', 'you', 'it', 'this', 'that',
+                      'and', 'or', 'but', 'not', 'what', 'how', 'when', 'where'}
+        query_words = query_words - stop_words
+        
+        if not query_words:
+            # Fall back to full query if all words are stop words
+            query_words = {query.lower()}
+        
         results = []
         
         for name, definition in self._definitions.items():
             score = 0
+            name_lower = name.lower()
+            desc_lower = definition.description.lower()
             
-            # Check name
-            if query_lower in name.lower():
-                score += 3
+            for word in query_words:
+                # Check name
+                if word in name_lower:
+                    score += 3
+                
+                # Check description
+                if word in desc_lower:
+                    score += 2
+                
+                # Check domain
+                if word == definition.domain.lower():
+                    score += 1
+                
+                # Check concepts
+                for concept in definition.concepts:
+                    if word in concept.lower():
+                        score += 1
+                
+                # Check synonyms
+                for syn in definition.synonyms:
+                    if word in syn.lower():
+                        score += 1
             
-            # Check description
-            if query_lower in definition.description.lower():
-                score += 2
-            
-            # Check domain
+            # Bonus for domain match
             if domain and definition.domain == domain:
-                score += 1
-            
-            # Check concepts
-            for concept in definition.concepts:
-                if query_lower in concept.lower():
-                    score += 1
-            
-            # Check synonyms
-            for syn in definition.synonyms:
-                if query_lower in syn.lower():
-                    score += 1
+                score += 2
             
             if score > 0:
                 results.append((score, definition))
@@ -408,5 +430,15 @@ def create_builtin_tools(config) -> List[Tool]:
                 return {"error": str(e)}
     
     tools.append(MemoryWriteTool(config))
+    
+    # Strava tools (fitness integration)
+    try:
+        from .strava import create_strava_tools
+        tools.extend(create_strava_tools(config))
+        logger.info("Strava tools loaded")
+    except ImportError as e:
+        logger.debug(f"Strava tools not available: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to load Strava tools: {e}")
     
     return tools

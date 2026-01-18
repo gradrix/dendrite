@@ -66,10 +66,13 @@ def create_goal_from_config(goal_config: dict) -> ScheduledGoal:
     )
 
 
-async def process_goal(goal: str) -> None:
+async def process_goal(goal: str, enable_forge: bool = False) -> None:
     """Process a single goal."""
     config = Config.from_env()
-    orchestrator = await Orchestrator.from_config(config)
+    orchestrator = await Orchestrator.from_config(config, enable_forge=enable_forge)
+    
+    if enable_forge:
+        print("🔧 ToolForge enabled - dynamic tool creation available")
     
     print(f"🧠 Processing: {goal}")
     print("-" * 40)
@@ -405,6 +408,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--forge",
+        action="store_true",
+        help="Enable ToolForge for dynamic tool creation",
+    )
+    
+    parser.add_argument(
         "--list-goals",
         action="store_true",
         help="List goals from config file",
@@ -422,7 +431,7 @@ Examples:
     elif args.interactive:
         asyncio.run(interactive_mode())
     elif args.goal:
-        asyncio.run(process_goal(args.goal))
+        asyncio.run(process_goal(args.goal, enable_forge=args.forge))
     else:
         parser.print_help()
         sys.exit(1)

@@ -32,9 +32,9 @@ goals:
   #   enabled: true
   #   tags: [productivity]
 
-  # Example: Hourly Strava check
-  # - id: strava_sync
-  #   goal: "Check my Strava activities and tell me if there are new kudos"
+  # Example: Hourly Strava kudos check
+  # - id: get_strava_kudos
+  #   goal: "Use strava_collect_kudos_givers with hours_back=48"
   #   schedule: cron
   #   cron: "0 * * * *"
   #   enabled: true
@@ -43,7 +43,7 @@ goals:
 
   # Example: One-time setup task
   # - id: initial_setup
-  #   goal: "Initialize my workspace preferences"
+  #   goal: "Use strava_reciprocate_kudos with count=20 and max_age_hours=24"
   #   schedule: once
   #   enabled: true
 

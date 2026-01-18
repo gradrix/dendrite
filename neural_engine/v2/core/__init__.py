@@ -14,6 +14,7 @@ from .base import Neuron
 from .events import EventBus, Event, EventType
 from .memory import ThoughtTree, GoalContext
 from .orchestrator import Orchestrator
+from .recovery import RecoveryEngine, ExecutionHistory, RecoveryAction, FailureType
 
 __all__ = [
     'Config',
@@ -22,4 +23,5 @@ __all__ = [
     'EventBus', 'Event', 'EventType',
     'ThoughtTree', 'GoalContext',
     'Orchestrator',
+    'RecoveryEngine', 'ExecutionHistory', 'RecoveryAction', 'FailureType',
 ]

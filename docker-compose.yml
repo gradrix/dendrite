@@ -119,6 +119,9 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    command: redis-server --appendonly yes --appendfsync everysec
+    # appendonly yes = AOF persistence (survives restarts)
+    # appendfsync everysec = sync every second (good balance of safety/performance)
 
   postgres:
     image: pgvector/pgvector:pg16

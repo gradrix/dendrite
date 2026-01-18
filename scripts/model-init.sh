@@ -1,99 +1,60 @@
 #!/bin/bash
-# model-init.sh - Downloads the appropriate model for the RAM profile
+#
+# Model initialization script for llama.cpp
+# Downloads GGUF models based on RAM_PROFILE
+#
 
 set -e
 
+MODEL_DIR="/models"
+CURRENT_MODEL="$MODEL_DIR/current.gguf"
+
+# Model URLs based on RAM profile
+# Using small, efficient models that work well with llama.cpp
+declare -A MODELS=(
+    # 8GB RAM - Phi-3 Mini (3.8B params, ~2.3GB)
+    ["8gb"]="https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf"
+    
+    # 16GB RAM - Mistral 7B (7B params, ~4.1GB) 
+    ["16gb"]="https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+    
+    # 32GB RAM - Mistral 7B Q5 (better quality)
+    ["32gb"]="https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q5_K_M.gguf"
+)
+
 RAM_PROFILE="${RAM_PROFILE:-16gb}"
-MODELS_DIR="/models"
-STATE_FILE="${MODELS_DIR}/model_state.json"
+MODEL_URL="${MODELS[$RAM_PROFILE]}"
 
-# Model definitions (repo_id, filename, size_description)
-declare -A MODELS
-MODELS["8gb"]="Qwen/Qwen2.5-1.5B-Instruct-GGUF|qwen2.5-1.5b-instruct-q4_k_m.gguf|1GB"
-MODELS["16gb"]="Qwen/Qwen2.5-3B-Instruct-GGUF|qwen2.5-3b-instruct-q4_k_m.gguf|2GB"
-MODELS["32gb"]="Qwen/Qwen2.5-7B-Instruct-GGUF|qwen2.5-7b-instruct-q4_k_m.gguf|4.5GB"
-MODELS["64gb"]="Qwen/Qwen2.5-32B-Instruct-GGUF|qwen2.5-32b-instruct-q4_k_m.gguf|20GB"
-
-# Parse model info
-IFS='|' read -r REPO_ID FILENAME SIZE_DESC <<< "${MODELS[$RAM_PROFILE]}"
-
-if [ -z "$REPO_ID" ]; then
-    echo "❌ Unknown RAM profile: $RAM_PROFILE"
-    echo "   Valid options: 8gb, 16gb, 32gb, 64gb"
-    exit 1
+if [ -z "$MODEL_URL" ]; then
+    echo "Unknown RAM profile: $RAM_PROFILE. Using 16gb default."
+    MODEL_URL="${MODELS[16gb]}"
 fi
 
-MODEL_URL="https://huggingface.co/${REPO_ID}/resolve/main/${FILENAME}"
-MODEL_PATH="${MODELS_DIR}/${FILENAME}"
-CURRENT_LINK="${MODELS_DIR}/current.gguf"
-
-echo "🧠 Dendrite Model Initializer"
-echo "   RAM Profile: ${RAM_PROFILE}"
-echo "   Model: ${FILENAME} (${SIZE_DESC})"
+echo "=============================================="
+echo "Dendrite Model Initialization"
+echo "=============================================="
+echo "RAM Profile: $RAM_PROFILE"
+echo "Model URL: $MODEL_URL"
 echo ""
 
 # Check if model already exists
-if [ -f "$MODEL_PATH" ]; then
-    echo "✅ Model already downloaded: $MODEL_PATH"
-    
-    # Ensure symlink is correct
-    ln -sf "$MODEL_PATH" "$CURRENT_LINK"
-    echo "✅ Symlinked to: $CURRENT_LINK"
+if [ -f "$CURRENT_MODEL" ]; then
+    echo "✅ Model already exists at $CURRENT_MODEL"
+    echo "   Size: $(du -h $CURRENT_MODEL | cut -f1)"
     exit 0
 fi
 
-# Install curl if needed
-if ! command -v curl &> /dev/null; then
-    echo "📦 Installing curl..."
-    apt-get update -qq && apt-get install -y -qq curl
-fi
-
-# Download model
-echo "⬇️  Downloading model from HuggingFace..."
-echo "   URL: $MODEL_URL"
+echo "📥 Downloading model..."
+echo "   This may take a few minutes on first run."
 echo ""
 
-TEMP_PATH="${MODEL_PATH}.downloading"
-
-# Add HF token if provided (for gated models)
-CURL_OPTS="-L --progress-bar"
-if [ -n "$HF_TOKEN" ]; then
-    CURL_OPTS="$CURL_OPTS -H 'Authorization: Bearer $HF_TOKEN'"
-fi
+# Install wget if not present
+apt-get update -qq && apt-get install -y -qq wget > /dev/null 2>&1
 
 # Download with progress
-curl $CURL_OPTS -o "$TEMP_PATH" "$MODEL_URL"
-
-# Verify download
-if [ ! -f "$TEMP_PATH" ]; then
-    echo "❌ Download failed!"
-    exit 1
-fi
-
-# Get file size
-SIZE=$(du -h "$TEMP_PATH" | cut -f1)
-echo ""
-echo "📦 Downloaded: $SIZE"
-
-# Atomic rename
-mv "$TEMP_PATH" "$MODEL_PATH"
-
-# Create symlink for llama.cpp
-ln -sf "$MODEL_PATH" "$CURRENT_LINK"
-
-# Update state file
-cat > "$STATE_FILE" << EOF
-{
-  "ram_profile": "$RAM_PROFILE",
-  "model_file": "$FILENAME",
-  "repo_id": "$REPO_ID",
-  "downloaded_at": "$(date -Iseconds)",
-  "size": "$SIZE"
-}
-EOF
+wget --progress=bar:force:noscroll -O "$CURRENT_MODEL" "$MODEL_URL"
 
 echo ""
-echo "✅ Model ready: $MODEL_PATH"
-echo "✅ Symlinked to: $CURRENT_LINK"
-echo ""
-echo "🚀 llama.cpp server can now start!"
+echo "✅ Model downloaded successfully!"
+echo "   Size: $(du -h $CURRENT_MODEL | cut -f1)"
+echo "   Path: $CURRENT_MODEL"

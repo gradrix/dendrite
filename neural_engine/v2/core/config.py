@@ -20,10 +20,9 @@ class Config:
         orchestrator = Orchestrator(config)
     """
     
-    # LLM settings
+    # LLM settings (llama.cpp server)
     llm_base_url: str = "http://llama-gpu:8080/v1"
     llm_model: str = "local-model"
-    llm_api_key: str = "not-needed"
     
     # Redis settings  
     redis_host: str = "redis"
@@ -46,9 +45,8 @@ class Config:
     def from_env(cls) -> 'Config':
         """Create config from environment variables."""
         return cls(
-            llm_base_url=os.environ.get("OPENAI_API_BASE", "http://llama-gpu:8080/v1"),
+            llm_base_url=os.environ.get("LLM_BASE_URL", "http://llama-gpu:8080/v1"),
             llm_model=os.environ.get("LLM_MODEL", "local-model"),
-            llm_api_key=os.environ.get("OPENAI_API_KEY", "not-needed"),
             redis_host=os.environ.get("REDIS_HOST", "redis"),
             redis_port=int(os.environ.get("REDIS_PORT", 6379)),
             postgres_host=os.environ.get("POSTGRES_HOST", "postgres"),
