@@ -52,6 +52,7 @@ Thumbs.db
 
 # Logs
 *.log
+output.txt
 
 # Test data (isolated per test run)
 /tmp/test_cache_*

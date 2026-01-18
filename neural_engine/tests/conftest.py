@@ -9,7 +9,49 @@ import pytest
 import tempfile
 import shutil
 import os
+import subprocess
+import time
+import httpx
 from pathlib import Path
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_llm_container():
+    """
+    Ensure the LLM container is running before any tests start.
+    
+    This runs ONCE per test session and waits for the container to be healthy.
+    """
+    llm_base = os.environ.get("OPENAI_API_BASE", "http://llama-gpu:8080/v1")
+    
+    # Extract host from URL
+    if "llama-gpu" in llm_base or "llama-cpu" in llm_base:
+        # We're in Docker, check if LLM is reachable
+        health_url = llm_base.replace("/v1", "/health")
+        
+        max_wait = 60  # seconds
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait:
+            try:
+                response = httpx.get(health_url, timeout=5)
+                if response.status_code == 200:
+                    print(f"\n✅ LLM container is healthy: {health_url}")
+                    break
+            except Exception:
+                pass
+            
+            elapsed = int(time.time() - start_time)
+            if elapsed % 10 == 0:
+                print(f"\n⏳ Waiting for LLM container... ({elapsed}s)")
+            time.sleep(2)
+        else:
+            pytest.fail(
+                f"LLM container not available at {health_url} after {max_wait}s. "
+                "Start it with: docker compose up -d llama-gpu"
+            )
+    
+    yield
 
 
 @pytest.fixture(scope="function")
@@ -98,3 +140,47 @@ def verify_test_isolation():
     if live_cache_dir.exists():
         print(f"\n⚠️  REMINDER: Tests should use isolated fixtures, not {live_cache_dir}/")
         print("   Use temp_cache_dir fixture or isolated_*_cache fixtures")
+
+
+@pytest.fixture(scope="function")
+def system_config():
+    """
+    Provide a SystemConfig for integration testing.
+    
+    Uses real Redis but isolated test database.
+    Uses real LLM client.
+    """
+    import redis.asyncio as redis_async
+    from neural_engine.core.config import SystemConfig, Environment
+    
+    # Create Redis client for test database
+    redis_host = os.environ.get("REDIS_HOST", "redis")
+    redis_port = int(os.environ.get("REDIS_PORT", 6379))
+    redis_db = int(os.environ.get("REDIS_DB", 1))  # Use db=1 for tests
+    
+    redis_client = redis_async.Redis(
+        host=redis_host, 
+        port=redis_port, 
+        db=redis_db,
+        decode_responses=True
+    )
+    
+    from neural_engine.core.llm_client import LLMClient
+    config = SystemConfig.create_for_testing(
+        redis_client=redis_client,
+        llm_client=LLMClient()
+    )
+    
+    yield config
+
+
+@pytest.fixture(scope="function")
+def minimal_config():
+    """
+    Provide a minimal SystemConfig for unit testing.
+    
+    No external dependencies - suitable for fast unit tests.
+    """
+    from neural_engine.core.config import SystemConfig
+    return SystemConfig.create_minimal()
+

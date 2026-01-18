@@ -2,54 +2,47 @@
 Integration tests for the HTTP API server.
 
 These tests verify that the FastAPI server endpoints work correctly.
+Uses FastAPI's TestClient for in-process testing.
 """
 
 import pytest
 import os
-import requests
-from typing import Generator
+from unittest.mock import MagicMock, patch
 
-# Test configuration
-API_URLS = [
-    os.environ.get("API_TEST_URL"),  # Explicit override
-    "http://api:8000",  # Docker internal network (CPU)
-    "http://api-gpu:8000",  # Docker internal network (GPU)
-    "http://dendrite-api:8000",  # Container name (CPU)
-    "http://dendrite-api-gpu:8000",  # Container name (GPU)
-    "http://localhost:8000",  # Host machine
-]
+# Try to import TestClient for in-process testing
+try:
+    from fastapi.testclient import TestClient
+    from neural_engine.api.server import app
+    HAS_TESTCLIENT = True
+except ImportError:
+    HAS_TESTCLIENT = False
+
 TIMEOUT = 10
 
 
-def find_api_server() -> str:
-    """Find a working API server URL."""
-    for url in API_URLS:
-        if not url:
-            continue
-        try:
-            response = requests.get(f"{url}/health", timeout=3)
-            if response.status_code == 200:
-                return url
-        except requests.exceptions.RequestException:
-            pass
-    return None
-
-
 @pytest.fixture(scope="module")
-def api_url() -> Generator[str, None, None]:
-    """Get API URL, skip tests if not available."""
-    url = find_api_server()
-    if url is None:
-        pytest.skip("API server not available. Start with: ./start.sh api")
-    yield url
+def api_client():
+    """Create a TestClient for in-process API testing."""
+    if not HAS_TESTCLIENT:
+        pytest.skip("FastAPI TestClient not available")
+    
+    # Create mock orchestrator to avoid full initialization
+    with patch('neural_engine.api.server.get_orchestrator') as mock_get_orch:
+        mock_orch = MagicMock()
+        mock_orch.process.return_value = {"response": "Test response", "success": True}
+        mock_orch.tool_registry.get_all_tools.return_value = []
+        mock_get_orch.return_value = mock_orch
+        
+        with TestClient(app) as client:
+            yield client
 
 
 class TestAPIHealth:
     """Test API health endpoints."""
     
-    def test_health_endpoint(self, api_url):
+    def test_health_endpoint(self, api_client):
         """Verify health endpoint returns healthy status."""
-        response = requests.get(f"{api_url}/health", timeout=TIMEOUT)
+        response = api_client.get("/health")
         assert response.status_code == 200
         
         data = response.json()
@@ -58,15 +51,15 @@ class TestAPIHealth:
         assert "uptime_seconds" in data
         assert data["uptime_seconds"] >= 0
     
-    def test_openapi_docs(self, api_url):
+    def test_openapi_docs(self, api_client):
         """Verify OpenAPI documentation is available."""
-        response = requests.get(f"{api_url}/docs", timeout=TIMEOUT)
+        response = api_client.get("/docs")
         assert response.status_code == 200
         assert "swagger" in response.text.lower() or "redoc" in response.text.lower() or "openapi" in response.text.lower()
     
-    def test_openapi_json(self, api_url):
+    def test_openapi_json(self, api_client):
         """Verify OpenAPI JSON schema is available."""
-        response = requests.get(f"{api_url}/openapi.json", timeout=TIMEOUT)
+        response = api_client.get("/openapi.json")
         assert response.status_code == 200
         
         data = response.json()
@@ -77,20 +70,19 @@ class TestAPIHealth:
 class TestAPIGoals:
     """Test goal submission endpoints."""
     
-    def test_list_goals_empty(self, api_url):
+    def test_list_goals_empty(self, api_client):
         """Verify listing goals works with empty store."""
-        response = requests.get(f"{api_url}/api/v1/goals", timeout=TIMEOUT)
+        response = api_client.get("/api/v1/goals")
         assert response.status_code == 200
         
         data = response.json()
         assert isinstance(data, list)
     
-    def test_submit_goal_async(self, api_url):
+    def test_submit_goal_async(self, api_client):
         """Test submitting a goal in async mode."""
-        response = requests.post(
-            f"{api_url}/api/v1/goals",
-            json={"goal": "Say hello", "async_mode": True},
-            timeout=TIMEOUT
+        response = api_client.post(
+            "/api/v1/goals",
+            json={"goal": "Say hello", "async_mode": True}
         )
         assert response.status_code == 200
         
@@ -99,41 +91,34 @@ class TestAPIGoals:
         assert data["status"] in ["pending", "processing"]
         assert data["goal"] == "Say hello"
     
-    def test_get_goal_status(self, api_url):
+    def test_get_goal_status(self, api_client):
         """Test getting goal status by ID."""
         # Submit a goal first
-        submit_response = requests.post(
-            f"{api_url}/api/v1/goals",
-            json={"goal": "Test goal", "async_mode": True},
-            timeout=TIMEOUT
+        submit_response = api_client.post(
+            "/api/v1/goals",
+            json={"goal": "Test goal", "async_mode": True}
         )
         goal_id = submit_response.json()["goal_id"]
         
         # Get status
-        response = requests.get(
-            f"{api_url}/api/v1/goals/{goal_id}",
-            timeout=TIMEOUT
-        )
+        response = api_client.get(f"/api/v1/goals/{goal_id}")
         assert response.status_code == 200
         
         data = response.json()
         assert data["goal_id"] == goal_id
     
-    def test_get_nonexistent_goal(self, api_url):
+    def test_get_nonexistent_goal(self, api_client):
         """Test getting a goal that doesn't exist."""
-        response = requests.get(
-            f"{api_url}/api/v1/goals/nonexistent-id",
-            timeout=TIMEOUT
-        )
+        response = api_client.get("/api/v1/goals/nonexistent-id")
         assert response.status_code == 404
 
 
 class TestAPITools:
     """Test tools listing endpoint."""
     
-    def test_list_tools(self, api_url):
+    def test_list_tools(self, api_client):
         """Verify tools listing works."""
-        response = requests.get(f"{api_url}/api/v1/tools", timeout=TIMEOUT)
+        response = api_client.get("/api/v1/tools")
         # May return 200 or 500 depending on orchestrator state
         assert response.status_code in [200, 500]
         
@@ -145,12 +130,11 @@ class TestAPITools:
 class TestAPIChat:
     """Test chat endpoint."""
     
-    def test_chat_endpoint_exists(self, api_url):
+    def test_chat_endpoint_exists(self, api_client):
         """Verify chat endpoint exists."""
-        response = requests.post(
-            f"{api_url}/api/v1/chat",
-            json={"message": "Hello"},
-            timeout=30  # Chat may take longer
+        response = api_client.post(
+            "/api/v1/chat",
+            json={"message": "Hello"}
         )
         # May succeed or fail depending on orchestrator state
         assert response.status_code in [200, 500]
@@ -159,7 +143,7 @@ class TestAPIChat:
 class TestAPIAuthentication:
     """Test API authentication when enabled."""
     
-    def test_health_no_auth_required(self, api_url):
+    def test_health_no_auth_required(self, api_client):
         """Health endpoint should not require auth."""
-        response = requests.get(f"{api_url}/health", timeout=TIMEOUT)
+        response = api_client.get("/health")
         assert response.status_code == 200

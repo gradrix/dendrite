@@ -229,13 +229,12 @@ services:
     depends_on:
       redis:
         condition: service_started
-      llama-cpu:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     environment:
       REDIS_HOST: redis
-      OPENAI_API_BASE: http://llama-cpu:8080/v1
+      # Default to llama-gpu (override with OPENAI_API_BASE env var if needed)
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-http://llama-gpu:8080/v1}
       OPENAI_API_KEY: not-needed
       LLM_MODEL: local-model
       POSTGRES_HOST: postgres
@@ -248,8 +247,7 @@ services:
       - chroma_cache:/root/.cache/chroma  # Cache ChromaDB ONNX models
       - chroma_data:/app/chroma_data  # Persist Chroma vector database
     command: pytest
-    profiles:
-      - cpu
+    # No profile - works with any backend
 
   tests-gpu:
     build:
