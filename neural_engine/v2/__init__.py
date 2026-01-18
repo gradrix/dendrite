@@ -41,6 +41,18 @@ from .neurons import (
     MemoryNeuron,
 )
 
+from .scheduler import (
+    Scheduler,
+    ScheduledGoal,
+    GoalState,
+    GoalCondition,
+    ScheduleType,
+    ScheduledRun,
+    GoalStore,
+    InMemoryGoalStore,
+    RedisGoalStore,
+)
+
 __all__ = [
     # Core
     "Config",
@@ -57,4 +69,14 @@ __all__ = [
     "GenerativeNeuron",
     "ToolNeuron",
     "MemoryNeuron",
+    # Scheduler
+    "Scheduler",
+    "ScheduledGoal",
+    "GoalState",
+    "GoalCondition",
+    "ScheduleType",
+    "ScheduledRun",
+    "GoalStore",
+    "InMemoryGoalStore",
+    "RedisGoalStore",
 ]
